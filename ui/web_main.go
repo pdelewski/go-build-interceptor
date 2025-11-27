@@ -502,7 +502,7 @@ func listFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendErrorResponse(w http.ResponseWriter, message string) {
-	fmt.Printf("❌ Error: %s\n", message)
+	fmt.Printf("Error: %s\n", message)
 	response := FileResponse{
 		Success: false,
 		Error:   message,

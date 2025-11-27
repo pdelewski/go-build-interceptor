@@ -515,18 +515,22 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  margin: 0;
-  padding: 16px;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  background: transparent;
-  border: none;
+  margin: 0 !important;
+  padding: 16px !important;
+  font-family: 'Consolas', 'Courier New', monospace !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  background: transparent !important;
+  border: none !important;
   outline: none;
   overflow: auto;
   pointer-events: none;
-  white-space: pre;
-  tab-size: 4;
+  white-space: pre !important;
+  word-wrap: normal !important;
+  word-break: normal !important;
+  word-spacing: normal !important;
+  tab-size: 4 !important;
+  box-sizing: border-box !important;
   z-index: 1;
   display: block;
 }
@@ -537,18 +541,23 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  margin: 0;
-  padding: 16px;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-size: 14px;
-  line-height: 1.5;
+  margin: 0 !important;
+  padding: 16px !important;
+  font-family: 'Consolas', 'Courier New', monospace !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
   background: transparent;
   color: var(--vscode-text);
-  border: none;
+  border: none !important;
   outline: none;
   resize: none;
+  white-space: pre !important;
+  word-wrap: normal !important;
+  word-break: normal !important;
+  word-spacing: normal !important;
+  tab-size: 4 !important;
+  box-sizing: border-box !important;
   z-index: 2;
-  tab-size: 4;
 }
 
 /* Hide textarea text when syntax highlighting is active */
@@ -1025,26 +1034,39 @@ body {
 
 /* Prism.js Theme Overrides for VS Code Dark */
 .syntax-highlight pre[class*="language-"] {
-  margin: 0;
-  padding: 0;
+  margin: 0 !important;
+  padding: 0 !important;
   background: transparent !important;
-  overflow: visible;
-  white-space: pre;
-  word-spacing: normal;
-  word-break: normal;
-  word-wrap: normal;
-  line-height: 1.5;
-  tab-size: 4;
-  hyphens: none;
+  overflow: visible !important;
+  white-space: pre !important;
+  word-spacing: normal !important;
+  word-break: normal !important;
+  word-wrap: normal !important;
+  line-height: 1.5 !important;
+  tab-size: 4 !important;
+  box-sizing: border-box !important;
+  hyphens: none !important;
+  border: none !important;
+  font-family: 'Consolas', 'Courier New', monospace !important;
+  font-size: 14px !important;
 }
 
 .syntax-highlight code[class*="language-"] {
-  color: #d4d4d4;
-  background: none;
-  text-shadow: none;
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-size: 14px;
-  line-height: 1.5;
+  color: #d4d4d4 !important;
+  background: none !important;
+  text-shadow: none !important;
+  font-family: 'Consolas', 'Courier New', monospace !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  white-space: pre !important;
+  word-spacing: normal !important;
+  word-break: normal !important;
+  word-wrap: normal !important;
+  tab-size: 4 !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
 }
 
 /* Go syntax highlighting colors (VS Code style) */

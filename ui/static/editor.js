@@ -841,9 +841,22 @@ function zoomIn() {
     const currentSize = parseInt(getComputedStyle(editor).fontSize);
     const newSize = currentSize + 1;
     
-    editor.style.fontSize = newSize + 'px';
+    // Set font size with !important to override CSS
+    editor.style.setProperty('font-size', newSize + 'px', 'important');
+    
     if (syntaxHighlight) {
-        syntaxHighlight.style.fontSize = newSize + 'px';
+        syntaxHighlight.style.setProperty('font-size', newSize + 'px', 'important');
+        
+        // Also update Prism.js elements
+        const preElement = syntaxHighlight.querySelector('pre[class*="language-"]');
+        const codeElement = syntaxHighlight.querySelector('code[class*="language-"]');
+        
+        if (preElement) {
+            preElement.style.setProperty('font-size', newSize + 'px', 'important');
+        }
+        if (codeElement) {
+            codeElement.style.setProperty('font-size', newSize + 'px', 'important');
+        }
     }
 }
 
@@ -854,9 +867,23 @@ function zoomOut() {
     
     if (currentSize > 10) {
         const newSize = currentSize - 1;
-        editor.style.fontSize = newSize + 'px';
+        
+        // Set font size with !important to override CSS
+        editor.style.setProperty('font-size', newSize + 'px', 'important');
+        
         if (syntaxHighlight) {
-            syntaxHighlight.style.fontSize = newSize + 'px';
+            syntaxHighlight.style.setProperty('font-size', newSize + 'px', 'important');
+            
+            // Also update Prism.js elements
+            const preElement = syntaxHighlight.querySelector('pre[class*="language-"]');
+            const codeElement = syntaxHighlight.querySelector('code[class*="language-"]');
+            
+            if (preElement) {
+                preElement.style.setProperty('font-size', newSize + 'px', 'important');
+            }
+            if (codeElement) {
+                codeElement.style.setProperty('font-size', newSize + 'px', 'important');
+            }
         }
     }
 }
