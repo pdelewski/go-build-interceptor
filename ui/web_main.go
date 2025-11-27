@@ -240,7 +240,7 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
         </div>
 
         <!-- Side Panel -->
-        <div class="side-panel">
+        <div class="side-panel" id="sidePanel">
             <!-- Explorer Panel -->
             <div class="panel-content" id="explorer-panel">
                 <div class="panel-header">
@@ -279,6 +279,9 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                     <p>No repository detected</p>
                 </div>
             </div>
+            
+            <!-- Resize Handle -->
+            <div class="resize-handle" id="resizeHandle"></div>
         </div>
 
         <!-- Main Content Area -->

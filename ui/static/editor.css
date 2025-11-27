@@ -254,10 +254,13 @@ body {
 /* Side Panel */
 .side-panel {
   width: 300px;
+  min-width: 200px;
+  max-width: 600px;
   background: var(--vscode-sidebar-bg);
   border-right: 1px solid var(--vscode-border);
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .panel-content {
@@ -982,6 +985,42 @@ body {
   .dialog-file-item {
     padding: 6px 16px;
   }
+}
+
+/* Resize Handle */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 10;
+  transition: background-color 0.1s;
+}
+
+.resize-handle:hover {
+  background: var(--vscode-accent);
+}
+
+.resize-handle:active {
+  background: var(--vscode-accent);
+}
+
+/* Add visual indicator when resizing */
+.resizing .resize-handle {
+  background: var(--vscode-accent);
+}
+
+.resizing {
+  user-select: none;
+  cursor: ew-resize;
+}
+
+.resizing * {
+  cursor: ew-resize !important;
+  user-select: none !important;
 }
 
 /* Prism.js Theme Overrides for VS Code Dark */

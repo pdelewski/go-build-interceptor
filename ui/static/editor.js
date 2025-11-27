@@ -28,6 +28,7 @@ class CodeEditor {
         this.initializeEventListeners();
         this.loadFileTree();
         this.updateUI();
+        this.initializeResize();
     }
     
     initializeEventListeners() {
@@ -669,6 +670,58 @@ class CodeEditor {
             e.returnValue = '';
         }
     }
+    
+    initializeResize() {
+        const resizeHandle = document.getElementById('resizeHandle');
+        const sidePanel = document.getElementById('sidePanel');
+        
+        if (!resizeHandle || !sidePanel) return;
+        
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+        
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = parseInt(document.defaultView.getComputedStyle(sidePanel).width, 10);
+            
+            document.body.classList.add('resizing');
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            
+            e.preventDefault();
+        });
+        
+        const onMouseMove = (e) => {
+            if (!isResizing) return;
+            
+            const currentX = e.clientX;
+            const diffX = currentX - startX;
+            const newWidth = startWidth + diffX;
+            
+            // Constrain to min/max width
+            const minWidth = 200;
+            const maxWidth = 600;
+            const constrainedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+            
+            sidePanel.style.width = constrainedWidth + 'px';
+            
+            e.preventDefault();
+        };
+        
+        const onMouseUp = () => {
+            isResizing = false;
+            document.body.classList.remove('resizing');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+        
+        // Double-click to reset to default width
+        resizeHandle.addEventListener('dblclick', () => {
+            sidePanel.style.width = '300px';
+        });
+    }
 }
 
 // Context menu functions
@@ -784,15 +837,27 @@ function toggleWordWrap() {
 
 function zoomIn() {
     const editor = document.getElementById('editor');
+    const syntaxHighlight = document.getElementById('syntaxHighlight');
     const currentSize = parseInt(getComputedStyle(editor).fontSize);
-    editor.style.fontSize = (currentSize + 1) + 'px';
+    const newSize = currentSize + 1;
+    
+    editor.style.fontSize = newSize + 'px';
+    if (syntaxHighlight) {
+        syntaxHighlight.style.fontSize = newSize + 'px';
+    }
 }
 
 function zoomOut() {
     const editor = document.getElementById('editor');
+    const syntaxHighlight = document.getElementById('syntaxHighlight');
     const currentSize = parseInt(getComputedStyle(editor).fontSize);
+    
     if (currentSize > 10) {
-        editor.style.fontSize = (currentSize - 1) + 'px';
+        const newSize = currentSize - 1;
+        editor.style.fontSize = newSize + 'px';
+        if (syntaxHighlight) {
+            syntaxHighlight.style.fontSize = newSize + 'px';
+        }
     }
 }
 
