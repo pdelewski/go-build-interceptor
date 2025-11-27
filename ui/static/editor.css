@@ -499,6 +499,70 @@ body {
   background: var(--vscode-button-hover-bg);
 }
 
+/* Editor Container with Syntax Highlighting */
+.editor-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.syntax-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 16px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  background: transparent;
+  border: none;
+  outline: none;
+  overflow: auto;
+  pointer-events: none;
+  white-space: pre;
+  tab-size: 4;
+  z-index: 1;
+  display: block;
+}
+
+.editor-textarea {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 16px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  background: transparent;
+  color: var(--vscode-text);
+  border: none;
+  outline: none;
+  resize: none;
+  z-index: 2;
+  tab-size: 4;
+}
+
+/* Hide textarea text when syntax highlighting is active */
+.editor-container.syntax-active .editor-textarea {
+  color: transparent !important;
+  caret-color: var(--vscode-text) !important;
+  background: transparent !important;
+}
+
+/* Make sure syntax highlighting is visible when active */
+.editor-container.syntax-active .syntax-highlight {
+  display: block;
+  visibility: visible;
+  z-index: 1;
+}
+
+/* Fallback for when syntax highlighting is not active */
 #editor {
   flex: 1;
   width: 100%;
@@ -918,4 +982,93 @@ body {
   .dialog-file-item {
     padding: 6px 16px;
   }
+}
+
+/* Prism.js Theme Overrides for VS Code Dark */
+.syntax-highlight pre[class*="language-"] {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  overflow: visible;
+  white-space: pre;
+  word-spacing: normal;
+  word-break: normal;
+  word-wrap: normal;
+  line-height: 1.5;
+  tab-size: 4;
+  hyphens: none;
+}
+
+.syntax-highlight code[class*="language-"] {
+  color: #d4d4d4;
+  background: none;
+  text-shadow: none;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Go syntax highlighting colors (VS Code style) */
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: #6a9955 !important;
+}
+
+.token.punctuation {
+  color: #d4d4d4 !important;
+}
+
+.token.property,
+.token.tag,
+.token.boolean,
+.token.number,
+.token.constant,
+.token.symbol,
+.token.deleted {
+  color: #b5cea8 !important;
+}
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: #ce9178 !important;
+}
+
+.token.operator,
+.token.entity,
+.token.url,
+.language-css .token.string,
+.style .token.string {
+  color: #d4d4d4 !important;
+}
+
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: #569cd6 !important;
+}
+
+.token.function,
+.token.class-name {
+  color: #dcdcaa !important;
+}
+
+.token.regex,
+.token.important,
+.token.variable {
+  color: #d16969 !important;
+}
+
+.token.important,
+.token.bold {
+  font-weight: bold;
+}
+
+.token.italic {
+  font-style: italic;
 }

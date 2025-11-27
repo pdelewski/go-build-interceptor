@@ -60,6 +60,10 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
     <title>Code Editor</title>
     <link rel="stylesheet" href="/static/editor.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>">
+    <!-- Prism.js for syntax highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-go.min.js"></script>
 </head>
 <body class="vscode-theme">
     <!-- Top Menu Bar -->
@@ -297,7 +301,10 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                             </div>
                         </div>
                     </div>
-                    <textarea id="editor" class="hidden" placeholder="// Start coding..."></textarea>
+                    <div id="editorContainer" class="editor-container hidden">
+                        <pre id="syntaxHighlight" class="syntax-highlight"><code id="highlightedCode" class="language-go"></code></pre>
+                        <textarea id="editor" class="editor-textarea" placeholder="// Start coding..." spellcheck="false"></textarea>
+                    </div>
                 </div>
             </div>
         </div>

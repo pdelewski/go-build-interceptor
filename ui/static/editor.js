@@ -9,6 +9,9 @@ class CodeEditor {
         
         // DOM elements
         this.editor = document.getElementById('editor');
+        this.editorContainer = document.getElementById('editorContainer');
+        this.syntaxHighlight = document.getElementById('syntaxHighlight');
+        this.highlightedCode = document.getElementById('highlightedCode');
         this.tabBar = document.getElementById('tabBar');
         this.fileTree = document.getElementById('fileTree');
         this.noEditorMessage = document.getElementById('noEditorMessage');
@@ -41,7 +44,10 @@ class CodeEditor {
         
         // Editor events
         this.editor.addEventListener('input', () => this.onEditorChange());
-        this.editor.addEventListener('scroll', () => this.updateStatusBar());
+        this.editor.addEventListener('scroll', () => {
+            this.syncScroll();
+            this.updateStatusBar();
+        });
         this.editor.addEventListener('keydown', (e) => this.onKeyDown(e));
         this.editor.addEventListener('keyup', () => this.updateStatusBar());
         this.editor.addEventListener('click', () => this.updateStatusBar());
@@ -320,6 +326,8 @@ class CodeEditor {
             }
         }
         
+        // Update syntax highlighting for Go files
+        this.updateSyntaxHighlighting();
         this.updateStatusBar();
     }
     
@@ -551,10 +559,51 @@ class CodeEditor {
     updateUI() {
         if (this.activeTab && this.openTabs.has(this.activeTab)) {
             this.noEditorMessage.classList.add('hidden');
-            this.editor.classList.remove('hidden');
+            this.editorContainer.classList.remove('hidden');
+            this.updateSyntaxHighlighting();
         } else {
             this.noEditorMessage.classList.remove('hidden');
-            this.editor.classList.add('hidden');
+            this.editorContainer.classList.add('hidden');
+        }
+    }
+    
+    syncScroll() {
+        if (this.syntaxHighlight && this.editor) {
+            this.syntaxHighlight.scrollTop = this.editor.scrollTop;
+            this.syntaxHighlight.scrollLeft = this.editor.scrollLeft;
+        }
+    }
+    
+    updateSyntaxHighlighting() {
+        if (!this.activeTab) {
+            return;
+        }
+        
+        // Check if this is a Go file
+        const isGoFile = this.activeTab.toLowerCase().endsWith('.go');
+        
+        if (isGoFile) {
+            console.log('🐹 Go file detected, enabling syntax highlighting');
+            
+            // Enable syntax highlighting for Go files
+            this.editorContainer.classList.add('syntax-active');
+            this.highlightedCode.textContent = this.editor.value;
+            
+            // Debug: Check if Prism is available
+            if (window.Prism) {
+                console.log('✅ Prism.js is loaded');
+                console.log('📝 Highlighting code:', this.editor.value.substring(0, 50) + '...');
+                
+                // Use Prism.js to highlight the code
+                Prism.highlightElement(this.highlightedCode);
+                console.log('🎨 Syntax highlighting applied');
+            } else {
+                console.error('❌ Prism.js is not loaded');
+            }
+        } else {
+            // Disable syntax highlighting for non-Go files
+            console.log('📄 Non-Go file, disabling syntax highlighting');
+            this.editorContainer.classList.remove('syntax-active');
         }
     }
     
@@ -834,6 +883,15 @@ function closeFileDialog() {
 
 // Initialize the IDE when page loads
 document.addEventListener('DOMContentLoaded', () => {
+    // Check if Prism.js is loaded
+    console.log('🔍 Checking Prism.js availability...');
+    if (window.Prism) {
+        console.log('✅ Prism.js is available:', window.Prism);
+        console.log('🐹 Go language support:', window.Prism.languages?.go ? 'Available' : 'Not found');
+    } else {
+        console.error('❌ Prism.js is not loaded - syntax highlighting will not work');
+    }
+    
     window.codeEditor = new CodeEditor();
     
     // Add keyboard support for file dialog
