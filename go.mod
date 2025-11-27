@@ -1,3 +1,3 @@
-module go-build-replay
+module go-build-interceptor
 
 go 1.21
