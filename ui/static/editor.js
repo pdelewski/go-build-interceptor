@@ -824,6 +824,24 @@ function toggleTerminal() {
     alert('Terminal feature coming soon!');
 }
 
+function showStaticCallGraph() {
+    // Static Call Graph functionality placeholder
+    console.log('Static Call Graph - feature not yet implemented');
+    alert('Static Call Graph feature coming soon!\n\nThis will analyze Go code to show function call relationships and dependencies.');
+}
+
+function showPackages() {
+    // Packages view functionality placeholder
+    console.log('Packages view - feature not yet implemented');
+    alert('Packages feature coming soon!\n\nThis will display Go packages, their dependencies, and structure.');
+}
+
+function showWorkDirectory() {
+    // Work Directory functionality placeholder
+    console.log('Work Directory view - feature not yet implemented');
+    alert('Work Directory feature coming soon!\n\nThis will show detailed information about the current working directory and project structure.');
+}
+
 function toggleWordWrap() {
     const editor = document.getElementById('editor');
     if (editor.style.whiteSpace === 'pre-wrap') {

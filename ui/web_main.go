@@ -135,6 +135,16 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                         Toggle Git <span class="menu-shortcut">Ctrl+Shift+G</span>
                     </div>
                     <div class="menu-separator"></div>
+                    <div class="menu-option" onclick="showStaticCallGraph()">
+                        Static Call Graph
+                    </div>
+                    <div class="menu-option" onclick="showPackages()">
+                        Packages
+                    </div>
+                    <div class="menu-option" onclick="showWorkDirectory()">
+                        Work Directory
+                    </div>
+                    <div class="menu-separator"></div>
                     <div class="menu-option" onclick="toggleWordWrap()">
                         Toggle Word Wrap
                     </div>
@@ -296,7 +306,7 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                 <div class="editor-group">
                     <div class="no-editor-message" id="noEditorMessage">
                         <div class="welcome-content">
-                            <h2>Welcome to Code Editor</h2>
+                            <h2>Welcome to GoLang instrumentation studio</h2>
                             <p>Open a file to start editing</p>
                             <div class="quick-actions">
                                 <button onclick="createNewFile()" class="quick-action">New File</button>
