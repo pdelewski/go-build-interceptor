@@ -60,14 +60,15 @@ func main() {
 		}()
 	}
 
-	if verbose {
+	switch {
+	case verbose:
 		parser.DumpCommands()
-	} else if dump {
+	case dump:
 		for i, cmd := range commands {
 			fmt.Printf("# Command %d\n", i+1)
 			fmt.Println(cmd.String())
 		}
-	} else if dryRun {
+	case dryRun:
 		// Dry run mode - just show what would be executed
 		fmt.Println("=== Dry Run Mode ===")
 		for i, cmd := range commands {
@@ -76,13 +77,13 @@ func main() {
 			}
 			fmt.Printf("Command %d: %s\n", i+1, cmd.String())
 		}
-	} else if interactive {
+	case interactive:
 		// Interactive mode - execute commands one by one
 		err := parser.ExecuteInteractive()
 		if err != nil {
 			log.Printf("Error in interactive mode: %v", err)
 		}
-	} else if execute {
+	case execute:
 		// Execute the script after generating it
 		fmt.Println("=== Generating and Executing Script ===")
 		err := parser.ExecuteAll()
@@ -91,7 +92,7 @@ func main() {
 		} else {
 			fmt.Println("\nReplay completed successfully!")
 		}
-	} else {
+	default:
 		// Default behavior: generate script without executing
 		fmt.Println("=== Generating Script ===")
 		err := parser.GenerateScript()
