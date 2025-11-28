@@ -306,7 +306,7 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                 <div class="editor-group">
                     <div class="no-editor-message" id="noEditorMessage">
                         <div class="welcome-content">
-                            <h2>Welcome to GoLang instrumentation studio</h2>
+                            <h2>Welcome to GoLang instrumentation IDE</h2>
                             <p>Open a file to start editing</p>
                             <div class="quick-actions">
                                 <button onclick="createNewFile()" class="quick-action">New File</button>
