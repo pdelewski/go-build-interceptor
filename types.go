@@ -18,6 +18,7 @@ type Config struct {
 	Interactive bool
 	Capture     bool
 	JSONCapture bool
+	PackFiles   bool
 }
 
 // ShouldCapture returns true if any capture mode is enabled

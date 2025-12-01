@@ -24,17 +24,8 @@ func main() {
 	// Create processor
 	processor := NewProcessor(config)
 
-	// Explicitly parse to get commands
-	commands, err := processor.Parse()
-	if err != nil {
-		log.Fatalf("Error parsing file: %v", err)
-	}
-
-	// Process compile commands to extract -pack files
-	processCompileCommands(commands)
-
-	// Now run with the processed commands
-	if err := processor.RunWithCommands(commands); err != nil {
+	// Run the processor
+	if err := processor.Run(); err != nil {
 		log.Fatalf("Error during execution: %v", err)
 	}
 }
@@ -53,50 +44,9 @@ func NewProcessor(config *Config) *Processor {
 	}
 }
 
-// Parse parses the log file and returns the commands
-func (p *Processor) Parse() ([]Command, error) {
-	if err := p.parser.ParseFile(p.config.LogFile); err != nil {
-		return nil, fmt.Errorf("error parsing file: %w", err)
-	}
-
-	commands := p.parser.GetCommands()
-	fmt.Printf("Parsed %d commands from %s\n\n", len(commands), p.config.LogFile)
-
-	return commands, nil
-}
-
-// RunWithCommands runs the processor with the given commands
-func (p *Processor) RunWithCommands(commands []Command) error {
-	// Set the commands in the parser
-	p.parser.commands = commands
-
-	// Set up WORK environment if needed
-	if err := p.setupWorkEnvironment(); err != nil {
-		return err
-	}
-
-	// Execute based on mode
-	return p.executeMode()
-}
-
-// Run executes the main processing flow (backward compatibility)
+// Run executes the main processing flow
 func (p *Processor) Run() error {
 	// Parse the log file
-	if err := p.parseLogFile(); err != nil {
-		return err
-	}
-
-	// Set up WORK environment if needed
-	if err := p.setupWorkEnvironment(); err != nil {
-		return err
-	}
-
-	// Execute based on mode
-	return p.executeMode()
-}
-
-// parseLogFile parses the log file and displays command count
-func (p *Processor) parseLogFile() error {
 	if err := p.parser.ParseFile(p.config.LogFile); err != nil {
 		return fmt.Errorf("error parsing file: %w", err)
 	}
@@ -104,8 +54,15 @@ func (p *Processor) parseLogFile() error {
 	commands := p.parser.GetCommands()
 	fmt.Printf("Parsed %d commands from %s\n\n", len(commands), p.config.LogFile)
 
-	return nil
+	// Set up WORK environment if needed
+	if err := p.setupWorkEnvironment(); err != nil {
+		return err
+	}
+
+	// Execute based on mode
+	return p.executeMode()
 }
+
 
 // setupWorkEnvironment creates a temp work directory if needed
 func (p *Processor) setupWorkEnvironment() error {
@@ -130,6 +87,35 @@ func (p *Processor) executeMode() error {
 	commands := p.parser.GetCommands()
 
 	switch mode {
+	case "pack-files":
+		fmt.Println("=== Pack Files Mode ===")
+		compileCount := 0
+		totalFiles := 0
+		
+		for _, cmd := range commands {
+			if isCompileCommand(&cmd) {
+				compileCount++
+				files := extractPackFiles(&cmd)
+				if len(files) > 0 {
+					totalFiles += len(files)
+					fmt.Printf("Compile command %d: Found %d files after -pack flag:\n", compileCount, len(files))
+					
+					// Process each file with a custom action
+					processPackFiles(files, func(file string) {
+						fmt.Printf("  - %s\n", file)
+						// Add your custom action here for each file
+						// For example: analyzeFile(file), transformFile(file), etc.
+					})
+					fmt.Println()
+				}
+			}
+		}
+		
+		if compileCount > 0 {
+			fmt.Printf("Processed %d compile commands with %d total files.\n", compileCount, totalFiles)
+		} else {
+			fmt.Println("No compile commands found.")
+		}
 	case "verbose":
 		p.parser.DumpCommands()
 	case "dump":
@@ -201,31 +187,3 @@ func processPackFiles(files []string, action func(string)) {
 	}
 }
 
-// processCompileCommands finds compile commands and processes their -pack files
-func processCompileCommands(commands []Command) {
-	compileCount := 0
-	totalFiles := 0
-
-	for _, cmd := range commands {
-		if isCompileCommand(&cmd) {
-			compileCount++
-			files := extractPackFiles(&cmd)
-			if len(files) > 0 {
-				totalFiles += len(files)
-				fmt.Printf("Compile command %d: Found %d files after -pack flag:\n", compileCount, len(files))
-
-				// Process each file with a custom action
-				processPackFiles(files, func(file string) {
-					fmt.Printf("  - %s\n", file)
-					// Add your custom action here for each file
-					// For example: analyzeFile(file), transformFile(file), etc.
-				})
-				fmt.Println()
-			}
-		}
-	}
-
-	if compileCount > 0 {
-		fmt.Printf("Processed %d compile commands with %d total files.\n\n", compileCount, totalFiles)
-	}
-}
