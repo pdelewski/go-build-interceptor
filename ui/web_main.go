@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -22,7 +23,27 @@ type FileResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// Global variable to store the root directory
+var rootDirectory string
+
 func main() {
+	// Parse command line flags
+	flag.StringVar(&rootDirectory, "dir", ".", "Root directory to serve files from")
+	port := flag.String("port", "9090", "Port to serve on")
+	flag.Parse()
+
+	// Resolve the root directory to an absolute path
+	absRoot, err := filepath.Abs(rootDirectory)
+	if err != nil {
+		log.Fatalf("Failed to resolve root directory: %v", err)
+	}
+	rootDirectory = absRoot
+
+	// Verify the root directory exists
+	if _, err := os.Stat(rootDirectory); os.IsNotExist(err) {
+		log.Fatalf("Root directory does not exist: %s", rootDirectory)
+	}
+
 	// Serve static files from the static directory
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 
@@ -34,21 +55,28 @@ func main() {
 	http.HandleFunc("/api/save", saveFile)
 	http.HandleFunc("/api/list", listFiles)
 
-	port := "9090"
 	fmt.Printf("🚀 Web Text Editor Server Starting...\n")
-	fmt.Printf("📝 Access the editor at: http://localhost:%s\n", port)
-	fmt.Printf("📁 Working directory: %s\n", getCurrentDir())
+	fmt.Printf("📝 Access the editor at: http://localhost:%s\n", *port)
+	fmt.Printf("📁 Root directory: %s\n", rootDirectory)
 	fmt.Printf("⏹️  Press Ctrl+C to stop the server\n\n")
 
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Fatal(http.ListenAndServe(":"+*port, nil))
 }
 
-func getCurrentDir() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "unknown"
+// getFullPath resolves a relative path to a full path within the root directory
+func getFullPath(relativePath string) (string, error) {
+	// Clean the path to prevent directory traversal
+	cleanPath := filepath.Clean(relativePath)
+
+	// Join with root directory
+	fullPath := filepath.Join(rootDirectory, cleanPath)
+
+	// Ensure the path is within the root directory
+	if !strings.HasPrefix(fullPath, rootDirectory) {
+		return "", fmt.Errorf("path outside root directory")
 	}
-	return dir
+
+	return fullPath, nil
 }
 
 func serveEditor(w http.ResponseWriter, r *http.Request) {
@@ -306,7 +334,8 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                 <div class="editor-group">
                     <div class="no-editor-message" id="noEditorMessage">
                         <div class="welcome-content">
-                            <h2>Welcome to GoLang instrumentation IDE</h2>
+                            <h2>GoLang Source File Viewer</h2>
+                            <p>Viewing files from: ` + rootDirectory + `</p>
                             <p>Open a file to start editing</p>
                             <div class="quick-actions">
                                 <button onclick="createNewFile()" class="quick-action">New File</button>
@@ -401,16 +430,17 @@ func openFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security check: prevent directory traversal
-	if strings.Contains(req.Filename, "..") || strings.HasPrefix(req.Filename, "/") {
-		sendErrorResponse(w, "Invalid filename - directory traversal not allowed")
+	// Get the full path within the root directory
+	fullPath, err := getFullPath(req.Filename)
+	if err != nil {
+		sendErrorResponse(w, "Invalid filename - path outside root directory")
 		return
 	}
 
 	// Log the file operation
-	fmt.Printf("📂 Opening file: %s\n", req.Filename)
+	fmt.Printf("📂 Opening file: %s (full path: %s)\n", req.Filename, fullPath)
 
-	content, err := ioutil.ReadFile(req.Filename)
+	content, err := ioutil.ReadFile(fullPath)
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to read file: %v", err))
 		return
@@ -437,9 +467,10 @@ func saveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security check: prevent directory traversal
-	if strings.Contains(req.Filename, "..") || strings.HasPrefix(req.Filename, "/") {
-		sendErrorResponse(w, "Invalid filename - directory traversal not allowed")
+	// Get the full path within the root directory
+	fullPath, err := getFullPath(req.Filename)
+	if err != nil {
+		sendErrorResponse(w, "Invalid filename - path outside root directory")
 		return
 	}
 
@@ -447,15 +478,13 @@ func saveFile(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("💾 Saving file: %s (%d bytes)\n", req.Filename, len(req.Content))
 
 	// Create directory if it doesn't exist
-	dir := filepath.Dir(req.Filename)
-	if dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			sendErrorResponse(w, fmt.Sprintf("Failed to create directory: %v", err))
-			return
-		}
+	dir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		sendErrorResponse(w, fmt.Sprintf("Failed to create directory: %v", err))
+		return
 	}
 
-	if err := ioutil.WriteFile(req.Filename, []byte(req.Content), 0644); err != nil {
+	if err := ioutil.WriteFile(fullPath, []byte(req.Content), 0644); err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to write file: %v", err))
 		return
 	}
@@ -471,13 +500,14 @@ func listFiles(w http.ResponseWriter, r *http.Request) {
 		dir = "."
 	}
 
-	// Security check: prevent directory traversal
-	if strings.Contains(dir, "..") || strings.HasPrefix(dir, "/") {
-		sendErrorResponse(w, "Invalid directory - directory traversal not allowed")
+	// Get the full path within the root directory
+	fullPath, err := getFullPath(dir)
+	if err != nil {
+		sendErrorResponse(w, "Invalid directory - path outside root directory")
 		return
 	}
 
-	files, err := ioutil.ReadDir(dir)
+	files, err := ioutil.ReadDir(fullPath)
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to read directory: %v", err))
 		return
@@ -486,7 +516,7 @@ func listFiles(w http.ResponseWriter, r *http.Request) {
 	var fileList []string
 
 	// Add parent directory link if not in root
-	if dir != "." {
+	if dir != "." && fullPath != rootDirectory {
 		fileList = append(fileList, "../")
 	}
 
