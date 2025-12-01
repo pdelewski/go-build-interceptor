@@ -21,11 +21,6 @@ type Config struct {
 	PackFiles   bool
 }
 
-// ShouldCapture returns true if any capture mode is enabled
-func (c *Config) ShouldCapture() bool {
-	return c.Capture || c.JSONCapture
-}
-
 // Capturer interface for different capture methods
 type Capturer interface {
 	Capture() error

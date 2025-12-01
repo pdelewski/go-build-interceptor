@@ -17,7 +17,7 @@ func ParseFlags() *Config {
 	flag.BoolVar(&config.Capture, "capture", false, "Capture go build output to go-build.log")
 	flag.BoolVar(&config.JSONCapture, "json", false, "Capture go build JSON output and convert to text format in go-build.log")
 	flag.BoolVar(&config.PackFiles, "pack-files", false, "Process and display files from compile commands with -pack flag")
-	
+
 	flag.Parse()
 	return config
 }

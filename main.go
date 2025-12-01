@@ -11,16 +11,6 @@ func main() {
 	// Parse command line flags
 	config := ParseFlags()
 
-	// Handle capture mode if requested
-	if config.ShouldCapture() {
-		capturer := CreateCapturer(config)
-		if err := capturer.Capture(); err != nil {
-			log.Fatalf("Error during capture: %v", err)
-		}
-		fmt.Println(capturer.GetDescription())
-		fmt.Println()
-	}
-
 	// Create processor
 	processor := NewProcessor(config)
 
@@ -46,13 +36,18 @@ func NewProcessor(config *Config) *Processor {
 
 // Run executes the main processing flow
 func (p *Processor) Run() error {
-	// Parse the log file
-	if err := p.parser.ParseFile(p.config.LogFile); err != nil {
-		return fmt.Errorf("error parsing file: %w", err)
-	}
+	mode := p.config.GetExecutionMode()
 
-	commands := p.parser.GetCommands()
-	fmt.Printf("Parsed %d commands from %s\n\n", len(commands), p.config.LogFile)
+	// Capture modes don't need to parse log file
+	if mode != "capture" && mode != "json-capture" {
+		// Parse the log file
+		if err := p.parser.ParseFile(p.config.LogFile); err != nil {
+			return fmt.Errorf("error parsing file: %w", err)
+		}
+
+		commands := p.parser.GetCommands()
+		fmt.Printf("Parsed %d commands from %s\n\n", len(commands), p.config.LogFile)
+	}
 
 	// Set up WORK environment if needed
 	if err := p.setupWorkEnvironment(); err != nil {
@@ -62,7 +57,6 @@ func (p *Processor) Run() error {
 	// Execute based on mode
 	return p.executeMode()
 }
-
 
 // setupWorkEnvironment creates a temp work directory if needed
 func (p *Processor) setupWorkEnvironment() error {
@@ -87,11 +81,25 @@ func (p *Processor) executeMode() error {
 	commands := p.parser.GetCommands()
 
 	switch mode {
+	case "capture":
+		fmt.Println("=== Capture Mode ===")
+		capturer := &TextCapturer{}
+		if err := capturer.Capture(); err != nil {
+			return fmt.Errorf("capture failed: %w", err)
+		}
+		fmt.Println(capturer.GetDescription())
+	case "json-capture":
+		fmt.Println("=== JSON Capture Mode ===")
+		capturer := &JSONCapturer{}
+		if err := capturer.Capture(); err != nil {
+			return fmt.Errorf("JSON capture failed: %w", err)
+		}
+		fmt.Println(capturer.GetDescription())
 	case "pack-files":
 		fmt.Println("=== Pack Files Mode ===")
 		compileCount := 0
 		totalFiles := 0
-		
+
 		for _, cmd := range commands {
 			if isCompileCommand(&cmd) {
 				compileCount++
@@ -99,7 +107,7 @@ func (p *Processor) executeMode() error {
 				if len(files) > 0 {
 					totalFiles += len(files)
 					fmt.Printf("Compile command %d: Found %d files after -pack flag:\n", compileCount, len(files))
-					
+
 					// Process each file with a custom action
 					processPackFiles(files, func(file string) {
 						fmt.Printf("  - %s\n", file)
@@ -110,7 +118,7 @@ func (p *Processor) executeMode() error {
 				}
 			}
 		}
-		
+
 		if compileCount > 0 {
 			fmt.Printf("Processed %d compile commands with %d total files.\n", compileCount, totalFiles)
 		} else {
@@ -186,4 +194,3 @@ func processPackFiles(files []string, action func(string)) {
 		action(file)
 	}
 }
-

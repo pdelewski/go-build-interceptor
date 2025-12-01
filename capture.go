@@ -148,11 +148,3 @@ func writeTextOutput(outputs []string) error {
 
 	return nil
 }
-
-// CreateCapturer creates the appropriate capturer based on config
-func CreateCapturer(config *Config) Capturer {
-	if config.JSONCapture {
-		return &JSONCapturer{}
-	}
-	return &TextCapturer{}
-}

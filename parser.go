@@ -295,7 +295,7 @@ func (p *Parser) ExecuteInteractive() error {
 			switch input {
 			case "", "y", "yes":
 				fmt.Printf("Executing: %s\n", cmdStr)
-				
+
 				// Execute command in the persistent shell
 				_, err := fmt.Fprintln(stdin, cmdStr)
 				if err != nil {
@@ -406,7 +406,7 @@ func (c *Command) String() string {
 	if idx := strings.Index(c.Raw, " # "); idx != -1 {
 		cleanRaw = strings.TrimSpace(c.Raw[:idx])
 	}
-	
+
 	if strings.ContainsAny(cleanRaw, "><|") {
 		return cleanRaw
 	}
