@@ -10,15 +10,16 @@ type BuildAction struct {
 
 // Config holds all configuration options
 type Config struct {
-	LogFile     string
-	DryRun      bool
-	Dump        bool
-	Verbose     bool
-	Execute     bool
-	Interactive bool
-	Capture     bool
-	JSONCapture bool
-	PackFiles   bool
+	LogFile       string
+	DryRun        bool
+	Dump          bool
+	Verbose       bool
+	Execute       bool
+	Interactive   bool
+	Capture       bool
+	JSONCapture   bool
+	PackFiles     bool
+	PackFunctions bool
 }
 
 // Capturer interface for different capture methods
