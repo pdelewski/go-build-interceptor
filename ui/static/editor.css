@@ -315,11 +315,12 @@ body {
 
 /* File Tree */
 .file-tree {
-  flex: 1;
-  overflow-y: auto;
+  flex: 1 1 0%;
+  overflow-y: scroll !important;
   overflow-x: hidden;
   padding: 4px 0;
   min-height: 0;
+  position: relative;
 }
 
 /* Force scrollbar visibility for file tree */
@@ -346,8 +347,9 @@ body {
   padding: 4px 16px 4px 20px;
   cursor: pointer;
   font-size: 13px;
-  transition: background-color 0.1s;
+  transition: background-color 0.1s, color 0.1s;
   position: relative;
+  border: 1px solid transparent;
 }
 
 .file-item:hover {
@@ -357,6 +359,41 @@ body {
 .file-item.selected {
   background: var(--vscode-accent);
   color: white;
+}
+
+.file-item:focus {
+  outline: 1px solid var(--vscode-accent);
+  outline-offset: -1px;
+}
+
+/* Special styling for different item types when selected */
+.function-item.selected,
+.package-item.selected,
+.pack-info-line.selected {
+  background: var(--vscode-accent) !important;
+  color: white !important;
+}
+
+.function-item:hover,
+.package-item:hover,
+.pack-info-line:hover {
+  background: var(--vscode-hover) !important;
+}
+
+/* Make all explorer items selectable */
+.function-item,
+.package-item,
+.pack-info-line {
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s;
+  border: 1px solid transparent;
+}
+
+.function-item:focus,
+.package-item:focus,
+.pack-info-line:focus {
+  outline: 1px solid var(--vscode-accent);
+  outline-offset: -1px;
 }
 
 .file-item.directory {

@@ -6,6 +6,7 @@ class CodeEditor {
         this.currentContent = '';
         this.isModified = false;
         this.activeSidePanel = 'explorer';
+        this.selectedExplorerItem = null; // Track selected item in explorer
         
         // DOM elements
         this.editor = document.getElementById('editor');
@@ -62,6 +63,9 @@ class CodeEditor {
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleGlobalShortcuts(e));
+        
+        // File tree keyboard navigation
+        this.fileTree.addEventListener('keydown', (e) => this.handleExplorerKeyDown(e));
         
         // Window events
         window.addEventListener('beforeunload', (e) => this.onBeforeUnload(e));
@@ -153,12 +157,16 @@ class CodeEditor {
         files.forEach(file => {
             const fileItem = document.createElement('div');
             fileItem.className = 'file-item';
+            fileItem.dataset.itemType = 'file';
+            fileItem.dataset.itemPath = file;
+            fileItem.tabIndex = 0; // Make focusable for keyboard navigation
             
             const icon = document.createElement('span');
             icon.className = 'file-icon';
             
             if (file.endsWith('/')) {
                 fileItem.classList.add('directory');
+                fileItem.dataset.itemType = 'directory';
                 icon.classList.add('folder');
                 fileItem.textContent = file.slice(0, -1);
             } else {
@@ -166,9 +174,23 @@ class CodeEditor {
                 icon.classList.add(ext);
                 fileItem.textContent = file;
                 
-                // Make files clickable
-                fileItem.addEventListener('click', () => this.openFile(file));
-                fileItem.addEventListener('dblclick', () => this.openFile(file));
+                // Add selection and open functionality
+                fileItem.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.selectExplorerItem(fileItem);
+                });
+                fileItem.addEventListener('dblclick', (e) => {
+                    e.preventDefault();
+                    this.openFile(file);
+                });
+            }
+            
+            // Add selection functionality for directories too
+            if (file.endsWith('/')) {
+                fileItem.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.selectExplorerItem(fileItem);
+                });
             }
             
             fileItem.insertBefore(icon, fileItem.firstChild);
@@ -545,6 +567,93 @@ class CodeEditor {
         item.classList.add('selected');
     }
     
+    selectExplorerItem(item) {
+        // Clear previous selection in explorer
+        this.fileTree.querySelectorAll('.file-item, .function-item, .package-item, .pack-info-line').forEach(el => {
+            el.classList.remove('selected');
+        });
+        
+        // Select current item
+        item.classList.add('selected');
+        this.selectedExplorerItem = item;
+        
+        // Focus the item for keyboard navigation
+        item.focus();
+        
+        // Log selection info
+        const itemType = item.dataset.itemType || item.className.split(' ')[0];
+        const itemPath = item.dataset.itemPath || item.textContent;
+        console.log(`Selected ${itemType}: ${itemPath}`);
+    }
+
+    handleExplorerKeyDown(e) {
+        // Only handle keys when explorer panel is active
+        if (this.activeSidePanel !== 'explorer') return;
+        
+        const explorerItems = Array.from(this.fileTree.querySelectorAll('.file-item, .function-item, .package-item, .pack-info-line'));
+        if (explorerItems.length === 0) return;
+        
+        let currentIndex = -1;
+        if (this.selectedExplorerItem) {
+            currentIndex = explorerItems.indexOf(this.selectedExplorerItem);
+        }
+        
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                if (currentIndex < explorerItems.length - 1) {
+                    this.selectExplorerItem(explorerItems[currentIndex + 1]);
+                } else if (currentIndex === -1 && explorerItems.length > 0) {
+                    // Select first item if none selected
+                    this.selectExplorerItem(explorerItems[0]);
+                }
+                break;
+                
+            case 'ArrowUp':
+                e.preventDefault();
+                if (currentIndex > 0) {
+                    this.selectExplorerItem(explorerItems[currentIndex - 1]);
+                } else if (currentIndex === -1 && explorerItems.length > 0) {
+                    // Select last item if none selected
+                    this.selectExplorerItem(explorerItems[explorerItems.length - 1]);
+                }
+                break;
+                
+            case 'Enter':
+            case ' ': // Space key
+                e.preventDefault();
+                if (this.selectedExplorerItem) {
+                    // Handle different item types
+                    if (this.selectedExplorerItem.classList.contains('file-item')) {
+                        const itemPath = this.selectedExplorerItem.dataset.itemPath;
+                        const itemType = this.selectedExplorerItem.dataset.itemType;
+                        
+                        if (itemType === 'file' && itemPath && !itemPath.endsWith('/')) {
+                            // Open file
+                            this.openFile(itemPath);
+                        }
+                    }
+                    // For function, package, and pack-info items, just keep them selected
+                    // Could be extended later for more specific actions
+                }
+                break;
+                
+            case 'Home':
+                e.preventDefault();
+                if (explorerItems.length > 0) {
+                    this.selectExplorerItem(explorerItems[0]);
+                }
+                break;
+                
+            case 'End':
+                e.preventDefault();
+                if (explorerItems.length > 0) {
+                    this.selectExplorerItem(explorerItems[explorerItems.length - 1]);
+                }
+                break;
+        }
+    }
+    
     showContextMenu(e) {
         e.preventDefault();
         const contextMenu = document.getElementById('contextMenu');
@@ -860,7 +969,14 @@ async function showFunctions() {
                         // Try to parse function information
                         const functionItem = document.createElement('div');
                         functionItem.className = 'function-item';
+                        functionItem.tabIndex = 0; // Make focusable for keyboard navigation
                         functionItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+                        
+                        // Add selection event listeners
+                        functionItem.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            window.codeEditor?.selectExplorerItem(functionItem);
+                        });
                         
                         // Check if it's a file path or function signature
                         if (trimmedLine.endsWith('.go')) {
@@ -990,8 +1106,16 @@ async function showFiles() {
                         // For non-Go files or other output, show as info
                         const infoItem = document.createElement('div');
                         infoItem.className = 'pack-info-line';
+                        infoItem.tabIndex = 0; // Make focusable for keyboard navigation
                         infoItem.style.cssText = 'padding: 2px 8px; font-family: monospace; font-size: 11px; color: #888; white-space: pre;';
                         infoItem.textContent = trimmedLine;
+                        
+                        // Add selection event listeners
+                        infoItem.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            window.codeEditor?.selectExplorerItem(infoItem);
+                        });
+                        
                         fileTree.appendChild(infoItem);
                     }
                 });
@@ -1084,7 +1208,14 @@ async function showPackages() {
                     if (trimmedLine) {
                         const packageItem = document.createElement('div');
                         packageItem.className = 'package-item';
+                        packageItem.tabIndex = 0; // Make focusable for keyboard navigation
                         packageItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+                        
+                        // Add selection event listeners
+                        packageItem.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            window.codeEditor?.selectExplorerItem(packageItem);
+                        });
                         
                         // Check if it's a package name or other information
                         if (trimmedLine.startsWith('package ') || trimmedLine.includes('/')) {
