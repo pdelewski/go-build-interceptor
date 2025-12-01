@@ -95,6 +95,33 @@ func (p *Processor) executeMode() error {
 			return fmt.Errorf("JSON capture failed: %w", err)
 		}
 		fmt.Println(capturer.GetDescription())
+	case "pack-packages":
+		fmt.Println("=== Pack Packages Mode ===")
+		compileCount := 0
+		packageNames := make(map[string]int)
+
+		for _, cmd := range commands {
+			if isCompileCommand(&cmd) {
+				compileCount++
+				packageName := extractPackageName(&cmd)
+				if packageName != "" {
+					packageNames[packageName]++
+				}
+			}
+		}
+
+		if len(packageNames) > 0 {
+			fmt.Printf("Found %d unique packages in %d compile commands:\n\n", len(packageNames), compileCount)
+			for pkg, count := range packageNames {
+				fmt.Printf("  - %s", pkg)
+				if count > 1 {
+					fmt.Printf(" (compiled %d times)", count)
+				}
+				fmt.Println()
+			}
+		} else {
+			fmt.Println("No package names found in compile commands.")
+		}
 	case "pack-functions":
 		fmt.Println("=== Pack Functions Mode ===")
 		compileCount := 0
@@ -231,4 +258,15 @@ func processPackFiles(files []string, action func(string)) {
 	for _, file := range files {
 		action(file)
 	}
+}
+
+// extractPackageName extracts the package name after the -p flag in a compile command
+func extractPackageName(cmd *Command) string {
+	// Find the -p flag
+	for i, arg := range cmd.Args {
+		if arg == "-p" && i+1 < len(cmd.Args) {
+			return cmd.Args[i+1]
+		}
+	}
+	return ""
 }

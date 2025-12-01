@@ -20,6 +20,7 @@ type Config struct {
 	JSONCapture   bool
 	PackFiles     bool
 	PackFunctions bool
+	PackageNames  bool
 }
 
 // Capturer interface for different capture methods

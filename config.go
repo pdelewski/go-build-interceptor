@@ -18,6 +18,7 @@ func ParseFlags() *Config {
 	flag.BoolVar(&config.JSONCapture, "json", false, "Capture go build JSON output and convert to text format in go-build.log")
 	flag.BoolVar(&config.PackFiles, "pack-files", false, "Process and display files from compile commands with -pack flag")
 	flag.BoolVar(&config.PackFunctions, "pack-functions", false, "Extract and display functions from Go files in compile commands with -pack flag")
+	flag.BoolVar(&config.PackageNames, "pack-packages", false, "Extract and display package names from compile commands with -p flag")
 
 	flag.Parse()
 	return config
@@ -30,6 +31,8 @@ func (c *Config) GetExecutionMode() string {
 		return "json-capture"
 	case c.Capture:
 		return "capture"
+	case c.PackageNames:
+		return "pack-packages"
 	case c.PackFunctions:
 		return "pack-functions"
 	case c.PackFiles:
