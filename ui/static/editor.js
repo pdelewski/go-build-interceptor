@@ -818,6 +818,127 @@ function toggleGitPanel() {
     window.codeEditor?.switchSidePanel('git');
 }
 
+function showFunctions() {
+    // Functions view functionality placeholder
+    console.log('Functions view - feature not yet implemented');
+    alert('Functions feature coming soon!\n\nThis will display all functions and methods found in the current project files.');
+}
+
+async function showFiles() {
+    // Call external go-build-interceptor --pack-files and show output in explorer
+    console.log('Files view - calling go-build-interceptor --pack-files');
+    
+    try {
+        // Switch to explorer panel first
+        window.codeEditor?.switchSidePanel('explorer');
+        
+        // Show loading message
+        const fileTree = document.getElementById('fileTree');
+        if (fileTree) {
+            fileTree.innerHTML = '<div class="loading-message">🔍 Running go-build-interceptor --pack-files...</div>';
+        }
+        
+        // Call the API endpoint
+        const response = await fetch('/api/pack-files');
+        const result = await response.json();
+        
+        if (result.success) {
+            // Display the command output in the file tree
+            const output = result.content;
+            console.log('Pack files output:', output);
+            
+            if (fileTree) {
+                // Parse and format the output as clickable Go files
+                const lines = output.split('\n').filter(line => line.trim() !== '');
+                fileTree.innerHTML = '';
+                
+                // Add a header
+                const header = document.createElement('div');
+                header.className = 'pack-files-header';
+                header.style.cssText = 'padding: 8px; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 8px;';
+                header.textContent = '📦 Pack Files';
+                fileTree.appendChild(header);
+                
+                // Add each Go file as a clickable file item
+                lines.forEach(line => {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine && trimmedLine.endsWith('.go')) {
+                        const fileItem = document.createElement('div');
+                        fileItem.className = 'file-item';
+                        
+                        const icon = document.createElement('span');
+                        icon.className = 'file-icon go';
+                        
+                        // Extract just the filename for display
+                        const filename = trimmedLine.split('/').pop();
+                        fileItem.textContent = filename;
+                        
+                        // Make it clickable to open the file
+                        fileItem.addEventListener('click', () => {
+                            console.log('Opening pack file:', trimmedLine);
+                            window.codeEditor?.openFile(trimmedLine);
+                        });
+                        fileItem.addEventListener('dblclick', () => {
+                            console.log('Double-clicking pack file:', trimmedLine);
+                            window.codeEditor?.openFile(trimmedLine);
+                        });
+                        
+                        // Add hover effect
+                        fileItem.style.cursor = 'pointer';
+                        fileItem.addEventListener('mouseenter', () => {
+                            fileItem.style.backgroundColor = '#2a2d2e';
+                        });
+                        fileItem.addEventListener('mouseleave', () => {
+                            fileItem.style.backgroundColor = '';
+                        });
+                        
+                        fileItem.insertBefore(icon, fileItem.firstChild);
+                        fileTree.appendChild(fileItem);
+                    } else if (trimmedLine) {
+                        // For non-Go files or other output, show as info
+                        const infoItem = document.createElement('div');
+                        infoItem.className = 'pack-info-line';
+                        infoItem.style.cssText = 'padding: 2px 8px; font-family: monospace; font-size: 11px; color: #888; white-space: pre;';
+                        infoItem.textContent = trimmedLine;
+                        fileTree.appendChild(infoItem);
+                    }
+                });
+                
+                // If no files found, show message
+                const goFiles = lines.filter(line => line.trim().endsWith('.go'));
+                if (goFiles.length === 0) {
+                    const noFiles = document.createElement('div');
+                    noFiles.className = 'no-files-message';
+                    noFiles.style.cssText = 'padding: 8px; color: #999; font-style: italic;';
+                    noFiles.textContent = 'No Go files found in pack commands.';
+                    fileTree.appendChild(noFiles);
+                }
+            }
+        } else {
+            // Show error message
+            if (fileTree) {
+                fileTree.innerHTML = `<div class="error-message" style="padding: 8px; color: #ff6b6b;">❌ Error: ${result.error}</div>`;
+            }
+            console.error('Pack files error:', result.error);
+        }
+    } catch (error) {
+        // Show network error
+        const fileTree = document.getElementById('fileTree');
+        if (fileTree) {
+            fileTree.innerHTML = `<div class="error-message" style="padding: 8px; color: #ff6b6b;">❌ Network Error: ${error.message}</div>`;
+        }
+        console.error('Network error calling pack-files:', error);
+    }
+}
+
+function showProject() {
+    // Switch to explorer panel to show project files from --dir
+    console.log('Project view - switching to explorer panel');
+    window.codeEditor?.switchSidePanel('explorer');
+    // Refresh the file tree to ensure it shows current project state
+    window.codeEditor?.loadFileTree();
+}
+
 function toggleTerminal() {
     // Terminal functionality placeholder
     console.log('Terminal toggle - feature not yet implemented');

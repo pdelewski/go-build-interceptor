@@ -8,8 +8,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type FileRequest struct {
@@ -54,6 +56,7 @@ func main() {
 	http.HandleFunc("/api/open", openFile)
 	http.HandleFunc("/api/save", saveFile)
 	http.HandleFunc("/api/list", listFiles)
+	http.HandleFunc("/api/pack-files", getPackFiles)
 
 	fmt.Printf("🚀 Web Text Editor Server Starting...\n")
 	fmt.Printf("📝 Access the editor at: http://localhost:%s\n", *port)
@@ -161,6 +164,16 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                     </div>
                     <div class="menu-option" onclick="toggleGitPanel()">
                         Toggle Git <span class="menu-shortcut">Ctrl+Shift+G</span>
+                    </div>
+                    <div class="menu-separator"></div>
+                    <div class="menu-option" onclick="showFunctions()">
+                        Functions
+                    </div>
+                    <div class="menu-option" onclick="showFiles()">
+                        Files
+                    </div>
+                    <div class="menu-option" onclick="showProject()">
+                        Project
                     </div>
                     <div class="menu-separator"></div>
                     <div class="menu-option" onclick="showStaticCallGraph()">
@@ -410,7 +423,7 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
         </div>
     </div>
 
-    <script src="/static/editor.js"></script>
+    <script src="/static/editor.js?v=` + fmt.Sprintf("%d", time.Now().Unix()) + `"></script>
 </body>
 </html>`
 
@@ -539,6 +552,52 @@ func listFiles(w http.ResponseWriter, r *http.Request) {
 		"files":   fileList,
 		"dir":     dir,
 	})
+}
+
+func getPackFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Log the operation
+	fmt.Printf("🔍 Executing pack-files command...\n")
+
+	// Get absolute path to go-build-interceptor executable
+	execPath, err := filepath.Abs("../go-build-interceptor")
+	if err != nil {
+		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
+		return
+	}
+
+	// Check if executable exists
+	if _, err := os.Stat(execPath); os.IsNotExist(err) {
+		sendErrorResponse(w, fmt.Sprintf("Executable not found at: %s", execPath))
+		return
+	}
+
+	// Execute the external command with absolute path
+	fmt.Printf("📍 Executing: %s --pack-files from directory: %s\n", execPath, rootDirectory)
+	cmd := exec.Command(execPath, "--pack-files")
+	cmd.Dir = rootDirectory // Set working directory to the root directory
+
+	// Capture both stdout and stderr
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+			err, execPath, rootDirectory, string(output))
+		sendErrorResponse(w, errorMsg)
+		return
+	}
+
+	// Return the command output
+	response := FileResponse{
+		Success: true,
+		Content: string(output),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 func sendErrorResponse(w http.ResponseWriter, message string) {
