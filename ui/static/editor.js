@@ -818,10 +818,102 @@ function toggleGitPanel() {
     window.codeEditor?.switchSidePanel('git');
 }
 
-function showFunctions() {
-    // Functions view functionality placeholder
-    console.log('Functions view - feature not yet implemented');
-    alert('Functions feature coming soon!\n\nThis will display all functions and methods found in the current project files.');
+async function showFunctions() {
+    // Call external go-build-interceptor --pack-functions and show output in explorer
+    console.log('Functions view - calling go-build-interceptor --pack-functions');
+    
+    try {
+        // Switch to explorer panel first
+        window.codeEditor?.switchSidePanel('explorer');
+        
+        // Show loading message
+        const fileTree = document.getElementById('fileTree');
+        if (fileTree) {
+            fileTree.innerHTML = '<div class="loading-message">⚙️ Running go-build-interceptor --pack-functions...</div>';
+        }
+        
+        // Call the API endpoint
+        const response = await fetch('/api/pack-functions');
+        const result = await response.json();
+        
+        if (result.success) {
+            // Display the command output in the file tree
+            const output = result.content;
+            console.log('Pack functions output:', output);
+            
+            if (fileTree) {
+                // Parse and format the output as function signatures
+                const lines = output.split('\n').filter(line => line.trim() !== '');
+                fileTree.innerHTML = '';
+                
+                // Add a header
+                const header = document.createElement('div');
+                header.className = 'pack-functions-header';
+                header.style.cssText = 'padding: 8px; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 8px;';
+                header.textContent = '⚙️ Functions';
+                fileTree.appendChild(header);
+                
+                // Group functions by file or show all
+                lines.forEach(line => {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine) {
+                        // Try to parse function information
+                        const functionItem = document.createElement('div');
+                        functionItem.className = 'function-item';
+                        functionItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+                        
+                        // Check if it's a file path or function signature
+                        if (trimmedLine.endsWith('.go')) {
+                            // This is a file name - make it a section header
+                            functionItem.style.cssText = 'padding: 8px 16px; font-weight: bold; color: #569cd6; background: #1e1e1e; border-top: 1px solid #444; border-bottom: 1px solid #333;';
+                            functionItem.textContent = trimmedLine;
+                        } else if (trimmedLine.includes('(') && trimmedLine.includes(')')) {
+                            // This is likely a function signature
+                            functionItem.style.cssText = 'padding: 4px 16px 4px 32px; cursor: pointer; font-size: 12px; font-family: monospace; color: #dcdcaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+                            functionItem.textContent = trimmedLine;
+                            functionItem.title = trimmedLine; // Show full signature on hover
+                            
+                            // Add hover effect
+                            functionItem.addEventListener('mouseenter', () => {
+                                functionItem.style.backgroundColor = '#2a2d2e';
+                            });
+                            functionItem.addEventListener('mouseleave', () => {
+                                functionItem.style.backgroundColor = '';
+                            });
+                        } else {
+                            // Other info
+                            functionItem.style.cssText = 'padding: 2px 16px 2px 32px; font-size: 11px; color: #888; font-style: italic;';
+                            functionItem.textContent = trimmedLine;
+                        }
+                        
+                        fileTree.appendChild(functionItem);
+                    }
+                });
+                
+                // If no functions found, show message
+                if (lines.length === 0) {
+                    const noFunctions = document.createElement('div');
+                    noFunctions.className = 'no-functions-message';
+                    noFunctions.style.cssText = 'padding: 8px; color: #999; font-style: italic;';
+                    noFunctions.textContent = 'No functions found.';
+                    fileTree.appendChild(noFunctions);
+                }
+            }
+        } else {
+            // Show error message
+            if (fileTree) {
+                fileTree.innerHTML = `<div class="error-message" style="padding: 8px; color: #ff6b6b;">❌ Error: ${result.error}</div>`;
+            }
+            console.error('Pack functions error:', result.error);
+        }
+    } catch (error) {
+        // Show network error
+        const fileTree = document.getElementById('fileTree');
+        if (fileTree) {
+            fileTree.innerHTML = `<div class="error-message" style="padding: 8px; color: #ff6b6b;">❌ Network Error: ${error.message}</div>`;
+        }
+        console.error('Network error calling pack-functions:', error);
+    }
 }
 
 async function showFiles() {
@@ -951,10 +1043,97 @@ function showStaticCallGraph() {
     alert('Static Call Graph feature coming soon!\n\nThis will analyze Go code to show function call relationships and dependencies.');
 }
 
-function showPackages() {
-    // Packages view functionality placeholder
-    console.log('Packages view - feature not yet implemented');
-    alert('Packages feature coming soon!\n\nThis will display Go packages, their dependencies, and structure.');
+async function showPackages() {
+    // Call external go-build-interceptor --pack-packages and show output in explorer
+    console.log('Packages view - calling go-build-interceptor --pack-packages');
+    
+    try {
+        // Switch to explorer panel first
+        window.codeEditor?.switchSidePanel('explorer');
+        
+        // Show loading message
+        const fileTree = document.getElementById('fileTree');
+        if (fileTree) {
+            fileTree.innerHTML = '<div class="loading-message">📦 Running go-build-interceptor --pack-packages...</div>';
+        }
+        
+        // Call the API endpoint
+        const response = await fetch('/api/pack-packages');
+        const result = await response.json();
+        
+        if (result.success) {
+            // Display the command output in the file tree
+            const output = result.content;
+            console.log('Pack packages output:', output);
+            
+            if (fileTree) {
+                // Parse and format the output as package information
+                const lines = output.split('\n').filter(line => line.trim() !== '');
+                fileTree.innerHTML = '';
+                
+                // Add a header
+                const header = document.createElement('div');
+                header.className = 'pack-packages-header';
+                header.style.cssText = 'padding: 8px; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 8px;';
+                header.textContent = '📦 Packages';
+                fileTree.appendChild(header);
+                
+                // Display package information
+                lines.forEach(line => {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine) {
+                        const packageItem = document.createElement('div');
+                        packageItem.className = 'package-item';
+                        packageItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+                        
+                        // Check if it's a package name or other information
+                        if (trimmedLine.startsWith('package ') || trimmedLine.includes('/')) {
+                            // This is likely a package name
+                            packageItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; color: #569cd6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+                            packageItem.textContent = trimmedLine;
+                            packageItem.title = trimmedLine; // Show full name on hover
+                            
+                            // Add hover effect
+                            packageItem.addEventListener('mouseenter', () => {
+                                packageItem.style.backgroundColor = '#2a2d2e';
+                            });
+                            packageItem.addEventListener('mouseleave', () => {
+                                packageItem.style.backgroundColor = '';
+                            });
+                        } else {
+                            // Other information
+                            packageItem.style.cssText = 'padding: 2px 16px 2px 32px; font-size: 11px; color: #888; font-style: italic;';
+                            packageItem.textContent = trimmedLine;
+                        }
+                        
+                        fileTree.appendChild(packageItem);
+                    }
+                });
+                
+                // If no packages found, show message
+                if (lines.length === 0) {
+                    const noPackages = document.createElement('div');
+                    noPackages.className = 'no-packages-message';
+                    noPackages.style.cssText = 'padding: 8px; color: #999; font-style: italic;';
+                    noPackages.textContent = 'No packages found.';
+                    fileTree.appendChild(noPackages);
+                }
+            }
+        } else {
+            // Show error message
+            if (fileTree) {
+                fileTree.innerHTML = `<div class="error-message" style="padding: 8px; color: #ff6b6b;">❌ Error: ${result.error}</div>`;
+            }
+            console.error('Pack packages error:', result.error);
+        }
+    } catch (error) {
+        // Show network error
+        const fileTree = document.getElementById('fileTree');
+        if (fileTree) {
+            fileTree.innerHTML = `<div class="error-message" style="padding: 8px; color: #ff6b6b;">❌ Network Error: ${error.message}</div>`;
+        }
+        console.error('Network error calling pack-packages:', error);
+    }
 }
 
 function showWorkDirectory() {
