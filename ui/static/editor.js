@@ -963,12 +963,32 @@ async function showFunctions() {
                 
                 // Group functions by file or show all
                 lines.forEach(line => {
-                    const trimmedLine = line.trim();
+                    let trimmedLine = line.trim();
+                    
+                    // Remove leading '-' if present
+                    if (trimmedLine.startsWith('- ')) {
+                        trimmedLine = trimmedLine.substring(2);
+                    } else if (trimmedLine.startsWith('-')) {
+                        trimmedLine = trimmedLine.substring(1);
+                    }
+                    
                     if (trimmedLine) {
                         // Try to parse function information
                         const functionItem = document.createElement('div');
                         functionItem.className = 'explorer-item function-item';
                         functionItem.tabIndex = 0; // Make focusable for keyboard navigation
+                        
+                        // Add checkbox for selection
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'explorer-checkbox';
+                        checkbox.addEventListener('click', (e) => {
+                            e.stopPropagation(); // Prevent item selection when clicking checkbox
+                        });
+                        
+                        // Add item content wrapper
+                        const itemContent = document.createElement('div');
+                        itemContent.className = 'explorer-item-content';
                         
                         // Add selection event listeners
                         functionItem.addEventListener('click', (e) => {
@@ -976,29 +996,13 @@ async function showFunctions() {
                             window.codeEditor?.selectExplorerItem(functionItem);
                         });
                         
-                        // Check if it's a file path or function signature
-                        if (trimmedLine.endsWith('.go')) {
-                            // This is a file name - make it a section header
-                            functionItem.style.cssText = 'padding: 8px 16px; font-weight: bold; color: #569cd6; background: #1e1e1e; border-top: 1px solid #444; border-bottom: 1px solid #333;';
-                            functionItem.textContent = trimmedLine;
-                        } else if (trimmedLine.includes('(') && trimmedLine.includes(')')) {
-                            // This is likely a function signature
-                            functionItem.style.cssText = 'padding: 4px 16px 4px 32px; cursor: pointer; font-size: 12px; font-family: monospace; color: #dcdcaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
-                            functionItem.textContent = trimmedLine;
-                            functionItem.title = trimmedLine; // Show full signature on hover
-                            
-                            // Add hover effect
-                            functionItem.addEventListener('mouseenter', () => {
-                                functionItem.style.backgroundColor = '#2a2d2e';
-                            });
-                            functionItem.addEventListener('mouseleave', () => {
-                                functionItem.style.backgroundColor = '';
-                            });
-                        } else {
-                            // Other info
-                            functionItem.style.cssText = 'padding: 2px 16px 2px 32px; font-size: 11px; color: #888; font-style: italic;';
-                            functionItem.textContent = trimmedLine;
-                        }
+                        // Set text content and title
+                        itemContent.textContent = trimmedLine;
+                        functionItem.title = trimmedLine;
+                        
+                        // Append checkbox and content to the function item
+                        functionItem.appendChild(checkbox);
+                        functionItem.appendChild(itemContent);
                         
                         fileTree.appendChild(functionItem);
                     }
@@ -1104,13 +1108,28 @@ async function showFiles() {
                         const infoItem = document.createElement('div');
                         infoItem.className = 'explorer-item pack-info-line';
                         infoItem.tabIndex = 0; // Make focusable for keyboard navigation
-                        infoItem.textContent = trimmedLine;
+                        
+                        // Add checkbox for selection
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'explorer-checkbox';
+                        checkbox.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                        });
+                        
+                        // Create content wrapper
+                        const contentWrapper = document.createElement('div');
+                        contentWrapper.className = 'explorer-item-content';
+                        contentWrapper.textContent = trimmedLine;
                         
                         // Add selection event listeners
                         infoItem.addEventListener('click', (e) => {
                             e.preventDefault();
                             window.codeEditor?.selectExplorerItem(infoItem);
                         });
+                        
+                        infoItem.appendChild(checkbox);
+                        infoItem.appendChild(contentWrapper);
                         
                         fileTree.appendChild(infoItem);
                     }
@@ -1213,13 +1232,27 @@ async function showPackages() {
                         packageItem.className = 'explorer-item package-item';
                         packageItem.tabIndex = 0; // Make focusable for keyboard navigation
                         
+                        // Add checkbox for selection
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.className = 'explorer-checkbox';
+                        checkbox.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                        });
+                        
+                        // Create content wrapper
+                        const contentWrapper = document.createElement('div');
+                        contentWrapper.className = 'explorer-item-content';
+                        contentWrapper.textContent = trimmedLine;
+                        
                         // Add selection event listeners
                         packageItem.addEventListener('click', (e) => {
                             e.preventDefault();
                             window.codeEditor?.selectExplorerItem(packageItem);
                         });
                         
-                        packageItem.textContent = trimmedLine;
+                        packageItem.appendChild(checkbox);
+                        packageItem.appendChild(contentWrapper);
                         packageItem.title = trimmedLine; // Show full name on hover
                         
                         fileTree.appendChild(packageItem);
