@@ -160,6 +160,43 @@ func (p *Processor) executeMode() error {
 		} else {
 			fmt.Println("No compile commands found.")
 		}
+	case "callgraph":
+		fmt.Println("=== Call Graph Mode ===")
+		compileCount := 0
+		var allFiles []string
+
+		// Collect all Go files from compile commands
+		for _, cmd := range commands {
+			if isCompileCommand(&cmd) {
+				compileCount++
+				files := extractPackFiles(&cmd)
+				for _, file := range files {
+					if strings.HasSuffix(file, ".go") {
+						allFiles = append(allFiles, file)
+					}
+				}
+			}
+		}
+
+		if len(allFiles) > 0 {
+			// Build the call graph
+			callGraph, err := BuildCallGraph(allFiles)
+			if err != nil {
+				fmt.Printf("Error building call graph: %v\n", err)
+			} else {
+				// Format and display the call graph
+				output := FormatCallGraph(callGraph)
+				fmt.Print(output)
+			}
+		} else {
+			fmt.Println("No Go files found in compile commands.")
+		}
+
+		if compileCount > 0 {
+			fmt.Printf("Processed %d compile commands with %d Go files.\n", compileCount, len(allFiles))
+		} else {
+			fmt.Println("No compile commands found.")
+		}
 	case "pack-files":
 		fmt.Println("=== Pack Files Mode ===")
 		compileCount := 0

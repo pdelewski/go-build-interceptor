@@ -21,6 +21,7 @@ type Config struct {
 	PackFiles     bool
 	PackFunctions bool
 	PackageNames  bool
+	CallGraph     bool
 }
 
 // Capturer interface for different capture methods

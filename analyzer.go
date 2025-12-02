@@ -21,6 +21,22 @@ type FunctionInfo struct {
 	Parameters []ParameterInfo
 	Returns    []string // Return types
 	IsExported bool
+	FilePath   string   // Path to the file containing this function
+}
+
+// FunctionCall represents a function call
+type FunctionCall struct {
+	CallerFile     string // File containing the caller
+	CallerFunction string // Function making the call
+	CalledFunction string // Function being called
+	Package        string // Package of the called function (if qualified)
+	Line           int    // Line number of the call
+}
+
+// CallGraph represents the complete call graph
+type CallGraph struct {
+	Functions map[string]*FunctionInfo // Map of function signatures to FunctionInfo
+	Calls     []FunctionCall           // List of function calls
 }
 
 // extractFunctionsFromGoFile uses AST parsing to extract function and method names from a Go file
@@ -41,6 +57,7 @@ func extractFunctionsFromGoFile(filePath string) ([]FunctionInfo, error) {
 			info := FunctionInfo{
 				Name:       x.Name.Name,
 				IsExported: ast.IsExported(x.Name.Name),
+				FilePath:   filePath,
 			}
 
 			// Check if it's a method (has receiver)
@@ -203,4 +220,150 @@ func FormatFunctionSignature(fn FunctionInfo) string {
 	}
 
 	return sig.String()
+}
+
+// extractFunctionCallsFromGoFile extracts function calls from a Go file
+func extractFunctionCallsFromGoFile(filePath string) ([]FunctionCall, error) {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
+	}
+
+	var calls []FunctionCall
+	var currentFunction string
+
+	// Walk through the AST to find function calls
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			// Track which function we're currently in
+			if x.Name != nil {
+				currentFunction = x.Name.Name
+				if x.Recv != nil && len(x.Recv.List) > 0 {
+					// For methods, include receiver type
+					recvType := extractReceiverType(x.Recv.List[0].Type)
+					currentFunction = fmt.Sprintf("(%s) %s", recvType, x.Name.Name)
+				}
+			}
+		case *ast.CallExpr:
+			// Extract function call information
+			if currentFunction != "" {
+				call := extractCallInfo(fset, x, filePath, currentFunction)
+				if call.CalledFunction != "" {
+					calls = append(calls, call)
+				}
+			}
+		}
+		return true
+	})
+
+	return calls, nil
+}
+
+// extractCallInfo extracts call information from a CallExpr
+func extractCallInfo(fset *token.FileSet, call *ast.CallExpr, filePath, currentFunction string) FunctionCall {
+	fc := FunctionCall{
+		CallerFile:     filePath,
+		CallerFunction: currentFunction,
+		Line:          fset.Position(call.Pos()).Line,
+	}
+
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		// Simple function call: funcName()
+		fc.CalledFunction = fun.Name
+	case *ast.SelectorExpr:
+		// Qualified call: pkg.FuncName() or obj.Method()
+		if x, ok := fun.X.(*ast.Ident); ok {
+			fc.Package = x.Name
+			fc.CalledFunction = fun.Sel.Name
+		}
+	}
+
+	return fc
+}
+
+// BuildCallGraph builds a complete call graph from Go files
+func BuildCallGraph(files []string) (*CallGraph, error) {
+	cg := &CallGraph{
+		Functions: make(map[string]*FunctionInfo),
+		Calls:     []FunctionCall{},
+	}
+
+	// First pass: extract all function declarations
+	for _, file := range files {
+		if !strings.HasSuffix(file, ".go") {
+			continue
+		}
+
+		functions, err := extractFunctionsFromGoFile(file)
+		if err != nil {
+			fmt.Printf("Warning: Error parsing functions in %s: %v\n", file, err)
+			continue
+		}
+
+		for i := range functions {
+			fn := &functions[i]
+			key := FormatFunctionSignature(*fn)
+			cg.Functions[key] = fn
+		}
+	}
+
+	// Second pass: extract all function calls
+	for _, file := range files {
+		if !strings.HasSuffix(file, ".go") {
+			continue
+		}
+
+		calls, err := extractFunctionCallsFromGoFile(file)
+		if err != nil {
+			fmt.Printf("Warning: Error parsing calls in %s: %v\n", file, err)
+			continue
+		}
+
+		cg.Calls = append(cg.Calls, calls...)
+	}
+
+	return cg, nil
+}
+
+// FormatCallGraph formats the call graph for display
+func FormatCallGraph(cg *CallGraph) string {
+	var output strings.Builder
+
+	output.WriteString("=== CALL GRAPH ===\n\n")
+
+	// Show function declarations
+	output.WriteString("Functions:\n")
+	for sig, fn := range cg.Functions {
+		output.WriteString(fmt.Sprintf("  %s", sig))
+		if fn.IsExported {
+			output.WriteString(" [exported]")
+		}
+		output.WriteString(fmt.Sprintf(" (%s)\n", fn.FilePath))
+	}
+
+	output.WriteString("\nFunction Calls:\n")
+	// Group calls by caller function
+	callsByCaller := make(map[string][]FunctionCall)
+	for _, call := range cg.Calls {
+		caller := fmt.Sprintf("%s (%s)", call.CallerFunction, call.CallerFile)
+		callsByCaller[caller] = append(callsByCaller[caller], call)
+	}
+
+	for caller, calls := range callsByCaller {
+		output.WriteString(fmt.Sprintf("  %s:\n", caller))
+		for _, call := range calls {
+			calledName := call.CalledFunction
+			if call.Package != "" {
+				calledName = call.Package + "." + call.CalledFunction
+			}
+			output.WriteString(fmt.Sprintf("    -> %s (line %d)\n", calledName, call.Line))
+		}
+	}
+
+	output.WriteString(fmt.Sprintf("\nSummary: %d functions, %d calls\n", len(cg.Functions), len(cg.Calls)))
+
+	return output.String()
 }
