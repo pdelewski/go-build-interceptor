@@ -957,9 +957,8 @@ async function showFunctions() {
                 
                 // Add a header
                 const header = document.createElement('div');
-                header.className = 'pack-functions-header';
-                header.style.cssText = 'padding: 8px; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 8px;';
-                header.textContent = '⚙️ Functions';
+                header.className = 'view-header';
+                header.textContent = '⚙️ FUNCTIONS';
                 fileTree.appendChild(header);
                 
                 // Group functions by file or show all
@@ -968,9 +967,8 @@ async function showFunctions() {
                     if (trimmedLine) {
                         // Try to parse function information
                         const functionItem = document.createElement('div');
-                        functionItem.className = 'function-item';
+                        functionItem.className = 'explorer-item function-item';
                         functionItem.tabIndex = 0; // Make focusable for keyboard navigation
-                        functionItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
                         
                         // Add selection event listeners
                         functionItem.addEventListener('click', (e) => {
@@ -1062,9 +1060,8 @@ async function showFiles() {
                 
                 // Add a header
                 const header = document.createElement('div');
-                header.className = 'pack-files-header';
-                header.style.cssText = 'padding: 8px; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 8px;';
-                header.textContent = '📦 Pack Files';
+                header.className = 'view-header';
+                header.textContent = '📦 PACK FILES';
                 fileTree.appendChild(header);
                 
                 // Add each Go file as a clickable file item
@@ -1105,9 +1102,8 @@ async function showFiles() {
                     } else if (trimmedLine) {
                         // For non-Go files or other output, show as info
                         const infoItem = document.createElement('div');
-                        infoItem.className = 'pack-info-line';
+                        infoItem.className = 'explorer-item pack-info-line';
                         infoItem.tabIndex = 0; // Make focusable for keyboard navigation
-                        infoItem.style.cssText = 'padding: 2px 8px; font-family: monospace; font-size: 11px; color: #888; white-space: pre;';
                         infoItem.textContent = trimmedLine;
                         
                         // Add selection event listeners
@@ -1197,19 +1193,25 @@ async function showPackages() {
                 
                 // Add a header
                 const header = document.createElement('div');
-                header.className = 'pack-packages-header';
-                header.style.cssText = 'padding: 8px; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 8px;';
-                header.textContent = '📦 Packages';
+                header.className = 'view-header';
+                header.textContent = '📦 PACKAGES';
                 fileTree.appendChild(header);
                 
                 // Display package information
                 lines.forEach(line => {
-                    const trimmedLine = line.trim();
+                    let trimmedLine = line.trim();
+                    
+                    // Remove leading '-' if present
+                    if (trimmedLine.startsWith('- ')) {
+                        trimmedLine = trimmedLine.substring(2);
+                    } else if (trimmedLine.startsWith('-')) {
+                        trimmedLine = trimmedLine.substring(1);
+                    }
+                    
                     if (trimmedLine) {
                         const packageItem = document.createElement('div');
-                        packageItem.className = 'package-item';
+                        packageItem.className = 'explorer-item package-item';
                         packageItem.tabIndex = 0; // Make focusable for keyboard navigation
-                        packageItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
                         
                         // Add selection event listeners
                         packageItem.addEventListener('click', (e) => {
@@ -1217,25 +1219,8 @@ async function showPackages() {
                             window.codeEditor?.selectExplorerItem(packageItem);
                         });
                         
-                        // Check if it's a package name or other information
-                        if (trimmedLine.startsWith('package ') || trimmedLine.includes('/')) {
-                            // This is likely a package name
-                            packageItem.style.cssText = 'padding: 4px 16px 4px 20px; cursor: default; font-size: 13px; font-family: monospace; color: #569cd6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
-                            packageItem.textContent = trimmedLine;
-                            packageItem.title = trimmedLine; // Show full name on hover
-                            
-                            // Add hover effect
-                            packageItem.addEventListener('mouseenter', () => {
-                                packageItem.style.backgroundColor = '#2a2d2e';
-                            });
-                            packageItem.addEventListener('mouseleave', () => {
-                                packageItem.style.backgroundColor = '';
-                            });
-                        } else {
-                            // Other information
-                            packageItem.style.cssText = 'padding: 2px 16px 2px 32px; font-size: 11px; color: #888; font-style: italic;';
-                            packageItem.textContent = trimmedLine;
-                        }
+                        packageItem.textContent = trimmedLine;
+                        packageItem.title = trimmedLine; // Show full name on hover
                         
                         fileTree.appendChild(packageItem);
                     }
@@ -1244,8 +1229,7 @@ async function showPackages() {
                 // If no packages found, show message
                 if (lines.length === 0) {
                     const noPackages = document.createElement('div');
-                    noPackages.className = 'no-packages-message';
-                    noPackages.style.cssText = 'padding: 8px; color: #999; font-style: italic;';
+                    noPackages.className = 'explorer-item pack-info-line';
                     noPackages.textContent = 'No packages found.';
                     fileTree.appendChild(noPackages);
                 }

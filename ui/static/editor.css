@@ -376,34 +376,69 @@ body {
   outline-offset: -1px;
 }
 
-/* Special styling for different item types when selected */
-.function-item.selected,
-.package-item.selected,
-.pack-info-line.selected {
-  background: var(--vscode-accent) !important;
-  color: white !important;
-}
-
-.function-item:hover,
-.package-item:hover,
-.pack-info-line:hover {
-  background: var(--vscode-hover) !important;
-}
-
-/* Make all explorer items selectable */
-.function-item,
-.package-item,
-.pack-info-line {
+/* Explorer item base styling - consistent for all view types */
+.explorer-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 16px 4px 20px;
   cursor: pointer;
+  font-size: 13px;
   transition: background-color 0.1s, color 0.1s;
+  position: relative;
   border: 1px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.function-item:focus,
-.package-item:focus,
-.pack-info-line:focus {
+.explorer-item:hover {
+  background: var(--vscode-hover);
+}
+
+.explorer-item.selected {
+  background: var(--vscode-accent);
+  color: white;
+}
+
+.explorer-item:focus {
   outline: 1px solid var(--vscode-accent);
   outline-offset: -1px;
+}
+
+/* Function items styling */
+.function-item {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  border-bottom: 1px solid var(--vscode-border);
+}
+
+/* Package items styling */
+.package-item {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  border-bottom: 1px solid var(--vscode-border);
+}
+
+/* Info line items styling (for misc output) */
+.pack-info-line {
+  padding: 2px 16px 2px 20px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  color: var(--vscode-text-muted);
+  font-style: italic;
+  white-space: pre;
+}
+
+/* Headers for different views */
+.view-header {
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--vscode-border);
+  background: var(--vscode-sidebar-bg);
 }
 
 .file-item.directory {
