@@ -1073,41 +1073,8 @@ async function showFiles() {
                     const trimmedLine = line.trim();
                     if (trimmedLine && trimmedLine.endsWith('.go')) {
                         const fileItem = document.createElement('div');
-                        fileItem.className = 'file-item';
-                        
-                        const icon = document.createElement('span');
-                        icon.className = 'file-icon go';
-                        
-                        // Extract just the filename for display
-                        const filename = trimmedLine.split('/').pop();
-                        fileItem.textContent = filename;
-                        
-                        // Make it clickable to open the file
-                        fileItem.addEventListener('click', () => {
-                            console.log('Opening pack file:', trimmedLine);
-                            window.codeEditor?.openFile(trimmedLine);
-                        });
-                        fileItem.addEventListener('dblclick', () => {
-                            console.log('Double-clicking pack file:', trimmedLine);
-                            window.codeEditor?.openFile(trimmedLine);
-                        });
-                        
-                        // Add hover effect
-                        fileItem.style.cursor = 'pointer';
-                        fileItem.addEventListener('mouseenter', () => {
-                            fileItem.style.backgroundColor = '#2a2d2e';
-                        });
-                        fileItem.addEventListener('mouseleave', () => {
-                            fileItem.style.backgroundColor = '';
-                        });
-                        
-                        fileItem.insertBefore(icon, fileItem.firstChild);
-                        fileTree.appendChild(fileItem);
-                    } else if (trimmedLine) {
-                        // For non-Go files or other output, show as info
-                        const infoItem = document.createElement('div');
-                        infoItem.className = 'explorer-item pack-info-line';
-                        infoItem.tabIndex = 0; // Make focusable for keyboard navigation
+                        fileItem.className = 'explorer-item file-item';
+                        fileItem.tabIndex = 0; // Make focusable for keyboard navigation
                         
                         // Add checkbox for selection
                         const checkbox = document.createElement('input');
@@ -1120,19 +1087,35 @@ async function showFiles() {
                         // Create content wrapper
                         const contentWrapper = document.createElement('div');
                         contentWrapper.className = 'explorer-item-content';
-                        contentWrapper.textContent = trimmedLine;
+                        
+                        // Add icon and filename
+                        const icon = document.createElement('span');
+                        icon.className = 'file-icon go';
+                        
+                        // Extract just the filename for display
+                        const filename = trimmedLine.split('/').pop();
+                        contentWrapper.appendChild(icon);
+                        contentWrapper.appendChild(document.createTextNode(filename));
                         
                         // Add selection event listeners
-                        infoItem.addEventListener('click', (e) => {
+                        fileItem.addEventListener('click', (e) => {
                             e.preventDefault();
-                            window.codeEditor?.selectExplorerItem(infoItem);
+                            window.codeEditor?.selectExplorerItem(fileItem);
                         });
                         
-                        infoItem.appendChild(checkbox);
-                        infoItem.appendChild(contentWrapper);
+                        // Make it double-clickable to open the file
+                        fileItem.addEventListener('dblclick', () => {
+                            console.log('Double-clicking pack file:', trimmedLine);
+                            window.codeEditor?.openFile(trimmedLine);
+                        });
                         
-                        fileTree.appendChild(infoItem);
+                        fileItem.appendChild(checkbox);
+                        fileItem.appendChild(contentWrapper);
+                        fileItem.title = trimmedLine; // Show full path on hover
+                        
+                        fileTree.appendChild(fileItem);
                     }
+                    // Remove the else if block - don't show non-Go files
                 });
                 
                 // If no files found, show message
