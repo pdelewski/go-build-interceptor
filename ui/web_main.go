@@ -291,8 +291,7 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                 <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M15.6 7.8L8.7.9c-.2-.2-.5-.2-.7 0L6.8 2.1 9.1 4.4c.2-.1.4-.1.6-.1.8 0 1.5.7 1.5 1.5 0 .2 0 .4-.1.6l2.2 2.2c.2-.1.4-.1.6-.1.8 0 1.5.7 1.5 1.5s-.7 1.5-1.5 1.5-1.5-.7-1.5-1.5c0-.2 0-.4.1-.6L9.3 7.2v4.3c.4.2.7.6.7 1.1 0 .8-.7 1.5-1.5 1.5s-1.5-.7-1.5-1.5c0-.5.3-.9.7-1.1V7.2c-.4-.2-.7-.6-.7-1.1 0-.2 0-.4.1-.6L4.9 3.3 1.1 7.1c-.2.2-.2.5 0 .7l6.9 6.9c.2.2.5.2.7 0l6.9-6.9c.2-.2.2-.5 0-.7Z"/></svg>
             </div>
         </div>
-
-        <!-- Side Panel -->
+      <!-- Side Panel -->
         <div class="side-panel" id="sidePanel">
             <!-- Explorer Panel -->
             <div class="panel-content" id="explorer-panel">
@@ -322,6 +321,7 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                     <div class="search-results" id="searchResults"></div>
                 </div>
             </div>
+  
 
             <!-- Git Panel -->
             <div class="panel-content hidden" id="git-panel">
