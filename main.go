@@ -179,13 +179,26 @@ func (p *Processor) executeMode() error {
 		}
 
 		if len(allFiles) > 0 {
-			// Build the call graph
-			callGraph, err := BuildCallGraph(allFiles)
+			// Get package information to filter only current module functions
+			packageInfo, err := getPackageInfo(".")
+			if err != nil {
+				fmt.Printf("Warning: Could not load package info: %v\n", err)
+				fmt.Println("Building call graph without package filtering...")
+				packageInfo = nil
+			}
+
+			// Build the call graph with package filtering
+			callGraph, err := BuildCallGraphWithPackageFilter(allFiles, packageInfo)
 			if err != nil {
 				fmt.Printf("Error building call graph: %v\n", err)
 			} else {
 				// Format and display the call graph
-				output := FormatCallGraph(callGraph)
+				var output string
+				if packageInfo != nil {
+					output = FormatCallGraphWithFilter(callGraph, packageInfo)
+				} else {
+					output = FormatCallGraph(callGraph)
+				}
 				fmt.Print(output)
 			}
 		} else {

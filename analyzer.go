@@ -5,7 +5,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // ParameterInfo holds information about a function parameter
@@ -286,14 +289,24 @@ func extractCallInfo(fset *token.FileSet, call *ast.CallExpr, filePath, currentF
 
 // BuildCallGraph builds a complete call graph from Go files
 func BuildCallGraph(files []string) (*CallGraph, error) {
+	return BuildCallGraphWithPackageFilter(files, nil)
+}
+
+// BuildCallGraphWithPackageFilter builds a call graph from Go files with package filtering
+func BuildCallGraphWithPackageFilter(files []string, packageInfo *PackageInfo) (*CallGraph, error) {
 	cg := &CallGraph{
 		Functions: make(map[string]*FunctionInfo),
 		Calls:     []FunctionCall{},
 	}
 
-	// First pass: extract all function declarations
+	// First pass: extract all function declarations (only from current module files)
 	for _, file := range files {
 		if !strings.HasSuffix(file, ".go") {
+			continue
+		}
+
+		// Skip files not in current module if package filtering is enabled
+		if packageInfo != nil && !isCurrentModuleFile(file, packageInfo) {
 			continue
 		}
 
@@ -310,9 +323,14 @@ func BuildCallGraph(files []string) (*CallGraph, error) {
 		}
 	}
 
-	// Second pass: extract all function calls
+	// Second pass: extract all function calls (only from current module files)
 	for _, file := range files {
 		if !strings.HasSuffix(file, ".go") {
+			continue
+		}
+
+		// Skip files not in current module if package filtering is enabled
+		if packageInfo != nil && !isCurrentModuleFile(file, packageInfo) {
 			continue
 		}
 
@@ -326,6 +344,72 @@ func BuildCallGraph(files []string) (*CallGraph, error) {
 	}
 
 	return cg, nil
+}
+
+// PackageInfo holds information about packages and their module affiliations
+type PackageInfo struct {
+	CurrentModulePackages map[string]bool // Packages that belong to the current module
+	ModulePath            string          // The module path (e.g., "go-build-interceptor")
+}
+
+// getPackageInfo uses packages.Load to determine which packages belong to the current module
+func getPackageInfo(workingDir string) (*PackageInfo, error) {
+	// Load packages using packages.Load
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedModule,
+		Dir:  workingDir,
+	}
+
+	// Load the current directory package and all its dependencies
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load packages: %w", err)
+	}
+
+	info := &PackageInfo{
+		CurrentModulePackages: make(map[string]bool),
+	}
+
+	// Find the main module path
+	for _, pkg := range pkgs {
+		if pkg.Module != nil && pkg.Module.Main {
+			info.ModulePath = pkg.Module.Path
+			break
+		}
+	}
+
+	// Identify packages that belong to the current module
+	for _, pkg := range pkgs {
+		if pkg.Module != nil && pkg.Module.Main {
+			info.CurrentModulePackages[pkg.PkgPath] = true
+		}
+	}
+
+	return info, nil
+}
+
+// isCurrentModuleFile checks if a file path belongs to the current module
+func isCurrentModuleFile(filePath string, packageInfo *PackageInfo) bool {
+	// Convert absolute path to relative to determine package
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return false
+	}
+
+	// For files in the current directory or subdirectories, consider them part of current module
+	// This is a simple heuristic - in practice you might want more sophisticated logic
+	wd, err := filepath.Abs(".")
+	if err != nil {
+		return false
+	}
+
+	rel, err := filepath.Rel(wd, absPath)
+	if err != nil {
+		return false
+	}
+
+	// If the relative path doesn't start with "..", it's in our module
+	return !strings.HasPrefix(rel, "..")
 }
 
 // buildCallChainFromMain builds a map of functions reachable from main functions
@@ -375,7 +459,7 @@ func buildCallChainFromMain(cg *CallGraph, callGraph map[string][]FunctionCall) 
 				callee = call.Package + "." + callee
 			}
 			reachableFromMain[callee] = true
-			
+
 			// For local calls, continue DFS
 			if call.Package == "" {
 				dfs(call.CalledFunction)
@@ -469,6 +553,99 @@ func FormatCallGraph(cg *CallGraph) string {
 	}
 
 	output.WriteString(fmt.Sprintf("Summary: %d functions reachable from main, %d calls\n", reachableFunctions, reachableCalls))
+
+	return output.String()
+}
+
+// FormatCallGraphWithFilter formats the call graph with package filtering information
+func FormatCallGraphWithFilter(cg *CallGraph, packageInfo *PackageInfo) string {
+	var output strings.Builder
+
+	if packageInfo != nil {
+		output.WriteString(fmt.Sprintf("=== CALL GRAPH (from main - %s module only) ===\n\n", packageInfo.ModulePath))
+	} else {
+		output.WriteString("=== CALL GRAPH (from main) ===\n\n")
+	}
+
+	// Build adjacency list for call relationships
+	callGraph := make(map[string][]FunctionCall)
+	callLineMap := make(map[string]map[string]int) // caller -> callee -> line number (first occurrence)
+
+	for _, call := range cg.Calls {
+		caller := call.CallerFunction
+		callGraph[caller] = append(callGraph[caller], call)
+
+		// Store line number for first occurrence
+		if _, exists := callLineMap[caller]; !exists {
+			callLineMap[caller] = make(map[string]int)
+		}
+		callee := call.CalledFunction
+		if call.Package != "" {
+			callee = call.Package + "." + callee
+		}
+		if _, exists := callLineMap[caller][callee]; !exists {
+			callLineMap[caller][callee] = call.Line
+		}
+	}
+
+	// Find functions reachable from main
+	reachableFromMain := buildCallChainFromMain(cg, callGraph)
+
+	// Find main entry points
+	mainEntryPoints := []string{}
+	for funcName := range callGraph {
+		if strings.Contains(funcName, "main") && reachableFromMain[funcName] {
+			mainEntryPoints = append(mainEntryPoints, funcName)
+		}
+	}
+
+	// If no main functions found, find actual entry points
+	if len(mainEntryPoints) == 0 {
+		calledFunctions := make(map[string]bool)
+		for _, call := range cg.Calls {
+			if call.Package == "" { // Only consider local functions
+				calledFunctions[call.CalledFunction] = true
+			}
+		}
+
+		for funcName := range callGraph {
+			if !calledFunctions[funcName] {
+				mainEntryPoints = append(mainEntryPoints, funcName)
+			}
+		}
+	}
+
+	// Generate call chains for each main entry point
+	processedFunctions := make(map[string]bool)
+
+	for _, entry := range mainEntryPoints {
+		if processedFunctions[entry] {
+			continue
+		}
+
+		output.WriteString(fmt.Sprintf("%s:\n", entry))
+		visited := make(map[string]bool)
+		generateCallChainsFromMain(entry, callGraph, callLineMap, "", visited, &output, processedFunctions, reachableFromMain, 1)
+		output.WriteString("\n")
+	}
+
+	// Count functions and calls reachable from main
+	reachableFunctions := 0
+	reachableCalls := 0
+	for funcName := range callGraph {
+		if reachableFromMain[funcName] {
+			reachableFunctions++
+			reachableCalls += len(callGraph[funcName])
+		}
+	}
+
+	if packageInfo != nil {
+		output.WriteString(fmt.Sprintf("Summary: %d functions reachable from main in %s module, %d calls\n",
+			reachableFunctions, packageInfo.ModulePath, reachableCalls))
+	} else {
+		output.WriteString(fmt.Sprintf("Summary: %d functions reachable from main, %d calls\n",
+			reachableFunctions, reachableCalls))
+	}
 
 	return output.String()
 }
