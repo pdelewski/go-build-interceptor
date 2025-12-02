@@ -328,11 +328,73 @@ func BuildCallGraph(files []string) (*CallGraph, error) {
 	return cg, nil
 }
 
-// FormatCallGraph formats the call graph for display as a unified graph with call chains
+// buildCallChainFromMain builds a map of functions reachable from main functions
+func buildCallChainFromMain(cg *CallGraph, callGraph map[string][]FunctionCall) map[string]bool {
+	reachableFromMain := make(map[string]bool)
+	visited := make(map[string]bool) // Separate visited tracker for DFS
+
+	// Find all main functions
+	mainFunctions := []string{}
+	for funcName := range callGraph {
+		if strings.Contains(funcName, "main") {
+			mainFunctions = append(mainFunctions, funcName)
+		}
+	}
+
+	// If no main functions found, use entry points (functions not called by others)
+	if len(mainFunctions) == 0 {
+		calledFunctions := make(map[string]bool)
+		for _, call := range cg.Calls {
+			if call.Package == "" { // Only consider local functions
+				calledFunctions[call.CalledFunction] = true
+			}
+		}
+
+		for funcName := range callGraph {
+			if !calledFunctions[funcName] {
+				mainFunctions = append(mainFunctions, funcName)
+			}
+		}
+	}
+
+	// DFS to find all functions reachable from main functions
+	var dfs func(string)
+	dfs = func(funcName string) {
+		if visited[funcName] {
+			return
+		}
+		visited[funcName] = true
+		reachableFromMain[funcName] = true
+
+		// Follow all calls from this function
+		calls := callGraph[funcName]
+		for _, call := range calls {
+			// For external calls, mark the call as reachable but don't traverse further
+			callee := call.CalledFunction
+			if call.Package != "" {
+				callee = call.Package + "." + callee
+			}
+			reachableFromMain[callee] = true
+			
+			// For local calls, continue DFS
+			if call.Package == "" {
+				dfs(call.CalledFunction)
+			}
+		}
+	}
+
+	for _, mainFunc := range mainFunctions {
+		dfs(mainFunc)
+	}
+
+	return reachableFromMain
+}
+
+// FormatCallGraph formats the call graph for display starting only from main functions
 func FormatCallGraph(cg *CallGraph) string {
 	var output strings.Builder
 
-	output.WriteString("=== CALL GRAPH ===\n\n")
+	output.WriteString("=== CALL GRAPH (from main) ===\n\n")
 
 	// Build adjacency list for call relationships
 	callGraph := make(map[string][]FunctionCall)
@@ -355,51 +417,58 @@ func FormatCallGraph(cg *CallGraph) string {
 		}
 	}
 
-	// Find entry points (functions that are not called by others, or main functions)
-	calledFunctions := make(map[string]bool)
-	for _, call := range cg.Calls {
-		if call.Package == "" { // Only consider local functions
-			calledFunctions[call.CalledFunction] = true
+	// Find functions reachable from main
+	reachableFromMain := buildCallChainFromMain(cg, callGraph)
+
+	// Find main entry points
+	mainEntryPoints := []string{}
+	for funcName := range callGraph {
+		if strings.Contains(funcName, "main") && reachableFromMain[funcName] {
+			mainEntryPoints = append(mainEntryPoints, funcName)
 		}
 	}
 
-	entryPoints := []string{}
-	allFunctions := make(map[string]bool)
-	for _, call := range cg.Calls {
-		allFunctions[call.CallerFunction] = true
-	}
+	// If no main functions found, find actual entry points
+	if len(mainEntryPoints) == 0 {
+		calledFunctions := make(map[string]bool)
+		for _, call := range cg.Calls {
+			if call.Package == "" { // Only consider local functions
+				calledFunctions[call.CalledFunction] = true
+			}
+		}
 
-	for funcName := range allFunctions {
-		if !calledFunctions[funcName] || strings.Contains(funcName, "main") {
-			entryPoints = append(entryPoints, funcName)
+		for funcName := range callGraph {
+			if !calledFunctions[funcName] {
+				mainEntryPoints = append(mainEntryPoints, funcName)
+			}
 		}
 	}
 
-	// Generate call chains for each entry point
+	// Generate call chains for each main entry point
 	processedFunctions := make(map[string]bool)
 
-	for _, entry := range entryPoints {
+	for _, entry := range mainEntryPoints {
 		if processedFunctions[entry] {
 			continue
 		}
 
 		output.WriteString(fmt.Sprintf("%s:\n", entry))
 		visited := make(map[string]bool)
-		generateCallChains(entry, callGraph, callLineMap, "", visited, &output, processedFunctions, 1)
+		generateCallChainsFromMain(entry, callGraph, callLineMap, "", visited, &output, processedFunctions, reachableFromMain, 1)
 		output.WriteString("\n")
 	}
 
-	// Handle any remaining functions that weren't processed
-	for funcName := range allFunctions {
-		if !processedFunctions[funcName] {
-			output.WriteString(fmt.Sprintf("%s:\n", funcName))
-			visited := make(map[string]bool)
-			generateCallChains(funcName, callGraph, callLineMap, "", visited, &output, processedFunctions, 1)
-			output.WriteString("\n")
+	// Count functions and calls reachable from main
+	reachableFunctions := 0
+	reachableCalls := 0
+	for funcName := range callGraph {
+		if reachableFromMain[funcName] {
+			reachableFunctions++
+			reachableCalls += len(callGraph[funcName])
 		}
 	}
 
-	output.WriteString(fmt.Sprintf("Summary: %d functions, %d calls\n", len(cg.Functions), len(cg.Calls)))
+	output.WriteString(fmt.Sprintf("Summary: %d functions reachable from main, %d calls\n", reachableFunctions, reachableCalls))
 
 	return output.String()
 }
@@ -481,6 +550,86 @@ func generateCallChains(currentFunc string, callGraph map[string][]FunctionCall,
 				subVisited[k] = v
 			}
 			generateCallChains(callList[0].CalledFunction, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, depth+1)
+		}
+	}
+}
+
+// generateCallChainsFromMain recursively generates call chains starting from main, only showing reachable functions
+func generateCallChainsFromMain(currentFunc string, callGraph map[string][]FunctionCall,
+	callLineMap map[string]map[string]int, indent string, visited map[string]bool,
+	output *strings.Builder, processedFunctions map[string]bool, reachableFromMain map[string]bool, depth int) {
+
+	if depth > 10 || visited[currentFunc] {
+		return
+	}
+
+	visited[currentFunc] = true
+	processedFunctions[currentFunc] = true
+
+	calls, exists := callGraph[currentFunc]
+	if !exists || len(calls) == 0 {
+		return
+	}
+
+	// Group calls by function name to handle multiple calls to same function
+	callGroups := make(map[string][]FunctionCall)
+	for _, call := range calls {
+		callee := call.CalledFunction
+		if call.Package != "" {
+			callee = call.Package + "." + callee
+		}
+		// Only include if reachable from main
+		if reachableFromMain[callee] || reachableFromMain[call.CalledFunction] {
+			callGroups[callee] = append(callGroups[callee], call)
+		}
+	}
+
+	for callee, callList := range callGroups {
+		// Show the call with line number
+		line := callLineMap[currentFunc][callee]
+		if len(callList) > 1 {
+			// Multiple calls to same function, show count
+			lines := make([]string, len(callList))
+			for i, call := range callList {
+				lines[i] = fmt.Sprintf("%d", call.Line)
+			}
+			output.WriteString(fmt.Sprintf("%s  -> %s (lines %s)", indent, callee, strings.Join(lines, ", ")))
+		} else {
+			output.WriteString(fmt.Sprintf("%s  -> %s (line %d)", indent, callee, line))
+		}
+
+		output.WriteString("\n")
+
+		// Always recurse for local functions that are reachable from main
+		if callList[0].Package == "" && reachableFromMain[callList[0].CalledFunction] {
+			subVisited := make(map[string]bool)
+			for k, v := range visited {
+				subVisited[k] = v
+			}
+			generateCallChainsFromMain(callList[0].CalledFunction, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+		}
+	}
+}
+
+// chainSingleCallsFromMain continues chaining single function calls inline, only for functions reachable from main
+func chainSingleCallsFromMain(currentFunc string, callGraph map[string][]FunctionCall,
+	callLineMap map[string]map[string]int, visited map[string]bool,
+	output *strings.Builder, reachableFromMain map[string]bool, maxDepth int) {
+
+	if maxDepth <= 0 || visited[currentFunc] {
+		return
+	}
+
+	visited[currentFunc] = true
+	calls := callGraph[currentFunc]
+
+	if len(calls) == 1 && calls[0].Package == "" && !visited[calls[0].CalledFunction] {
+		callee := calls[0].CalledFunction
+		// Only chain if reachable from main
+		if reachableFromMain[callee] {
+			line := callLineMap[currentFunc][callee]
+			output.WriteString(fmt.Sprintf(" -> %s (line %d)", callee, line))
+			chainSingleCallsFromMain(callee, callGraph, callLineMap, visited, output, reachableFromMain, maxDepth-1)
 		}
 	}
 }
