@@ -328,32 +328,165 @@ func BuildCallGraph(files []string) (*CallGraph, error) {
 	return cg, nil
 }
 
+// CallPath represents a sequence of function calls
+type CallPath struct {
+	Functions []string // List of function names in the call path
+	Files     []string // Corresponding file names
+	Lines     []int    // Line numbers where calls are made
+}
+
+// findCallPaths finds all call paths starting from entry points
+func findCallPaths(cg *CallGraph) []CallPath {
+	// Build adjacency list for faster lookups
+	callGraph := make(map[string][]FunctionCall)
+	for _, call := range cg.Calls {
+		caller := call.CallerFunction
+		callGraph[caller] = append(callGraph[caller], call)
+	}
+
+	// Find entry points (functions that are not called by others or start with "main")
+	calledFunctions := make(map[string]bool)
+	for _, call := range cg.Calls {
+		calledName := call.CalledFunction
+		if call.Package == "" { // Only consider local functions, not external packages
+			calledFunctions[calledName] = true
+		}
+	}
+
+	entryPoints := []string{}
+	for funcName := range cg.Functions {
+		// Extract simple function name for comparison
+		simpleName := extractSimpleFunctionName(funcName)
+		if !calledFunctions[simpleName] || simpleName == "main" {
+			entryPoints = append(entryPoints, simpleName)
+		}
+	}
+
+	var allPaths []CallPath
+	visited := make(map[string]bool)
+
+	// Generate paths from each entry point
+	for _, entry := range entryPoints {
+		paths := generatePaths(entry, callGraph, []string{}, []string{}, []int{}, visited, 10) // Max depth 10
+		allPaths = append(allPaths, paths...)
+	}
+
+	return allPaths
+}
+
+// extractSimpleFunctionName extracts just the function name from a full signature
+func extractSimpleFunctionName(signature string) string {
+	// Handle method signatures like "(Type) methodName(...)"
+	if strings.Contains(signature, ") ") {
+		parts := strings.Split(signature, ") ")
+		if len(parts) > 1 {
+			funcPart := parts[1]
+			if idx := strings.Index(funcPart, "("); idx > 0 {
+				return funcPart[:idx]
+			}
+		}
+	}
+	
+	// Handle regular function signatures like "functionName(...)"
+	if idx := strings.Index(signature, "("); idx > 0 {
+		return signature[:idx]
+	}
+	
+	return signature
+}
+
+// generatePaths recursively generates call paths
+func generatePaths(currentFunc string, callGraph map[string][]FunctionCall, 
+	currentPath []string, currentFiles []string, currentLines []int, 
+	globalVisited map[string]bool, maxDepth int) []CallPath {
+	
+	if len(currentPath) >= maxDepth {
+		return []CallPath{}
+	}
+
+	// Add current function to path
+	newPath := append(currentPath, currentFunc)
+	
+	calls, exists := callGraph[currentFunc]
+	if !exists || len(calls) == 0 {
+		// End of path - return the complete path if it has at least 2 functions
+		if len(newPath) >= 2 {
+			return []CallPath{{
+				Functions: newPath,
+				Files:     currentFiles,
+				Lines:     currentLines,
+			}}
+		}
+		return []CallPath{}
+	}
+
+	var paths []CallPath
+	localVisited := make(map[string]bool)
+	
+	for _, call := range calls {
+		calledFunc := call.CalledFunction
+		
+		// Skip external package calls and avoid cycles
+		if call.Package != "" || localVisited[calledFunc] || globalVisited[calledFunc] {
+			continue
+		}
+
+		localVisited[calledFunc] = true
+		
+		newFiles := append(currentFiles, call.CallerFile)
+		newLines := append(currentLines, call.Line)
+		
+		subPaths := generatePaths(calledFunc, callGraph, newPath, newFiles, newLines, globalVisited, maxDepth)
+		paths = append(paths, subPaths...)
+	}
+
+	// If we found no sub-paths but have a meaningful path, return it
+	if len(paths) == 0 && len(newPath) >= 2 {
+		return []CallPath{{
+			Functions: newPath,
+			Files:     currentFiles,
+			Lines:     currentLines,
+		}}
+	}
+
+	return paths
+}
+
 // FormatCallGraph formats the call graph for display
 func FormatCallGraph(cg *CallGraph) string {
 	var output strings.Builder
 
 	output.WriteString("=== CALL GRAPH ===\n\n")
 
-	// Group calls by caller function
-	callsByCaller := make(map[string][]FunctionCall)
-	for _, call := range cg.Calls {
-		caller := fmt.Sprintf("%s (%s)", call.CallerFunction, call.CallerFile)
-		callsByCaller[caller] = append(callsByCaller[caller], call)
-	}
-
-	for caller, calls := range callsByCaller {
-		output.WriteString(fmt.Sprintf("%s:\n", caller))
-		for _, call := range calls {
-			calledName := call.CalledFunction
-			if call.Package != "" {
-				calledName = call.Package + "." + call.CalledFunction
+	// Find and display call paths
+	paths := findCallPaths(cg)
+	
+	if len(paths) > 0 {
+		output.WriteString("Call Paths:\n")
+		for i, path := range paths {
+			if len(path.Functions) < 2 {
+				continue
 			}
-			output.WriteString(fmt.Sprintf("  -> %s (line %d)\n", calledName, call.Line))
+			
+			output.WriteString(fmt.Sprintf("%d. ", i+1))
+			for j, funcName := range path.Functions {
+				if j > 0 {
+					output.WriteString(" -> ")
+				}
+				output.WriteString(funcName)
+				
+				// Add line number and file info for intermediate calls
+				if j > 0 && j-1 < len(path.Lines) {
+					output.WriteString(fmt.Sprintf(":%d", path.Lines[j-1]))
+				}
+			}
+			output.WriteString("\n")
 		}
-		output.WriteString("\n")
+	} else {
+		output.WriteString("No call paths found.\n")
 	}
 
-	output.WriteString(fmt.Sprintf("Summary: %d functions, %d calls\n", len(cg.Functions), len(cg.Calls)))
+	output.WriteString(fmt.Sprintf("\nSummary: %d functions, %d calls, %d paths\n", len(cg.Functions), len(cg.Calls), len(paths)))
 
 	return output.String()
 }
