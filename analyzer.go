@@ -334,17 +334,6 @@ func FormatCallGraph(cg *CallGraph) string {
 
 	output.WriteString("=== CALL GRAPH ===\n\n")
 
-	// Show function declarations
-	output.WriteString("Functions:\n")
-	for sig, fn := range cg.Functions {
-		output.WriteString(fmt.Sprintf("  %s", sig))
-		if fn.IsExported {
-			output.WriteString(" [exported]")
-		}
-		output.WriteString(fmt.Sprintf(" (%s)\n", fn.FilePath))
-	}
-
-	output.WriteString("\nFunction Calls:\n")
 	// Group calls by caller function
 	callsByCaller := make(map[string][]FunctionCall)
 	for _, call := range cg.Calls {
@@ -353,17 +342,18 @@ func FormatCallGraph(cg *CallGraph) string {
 	}
 
 	for caller, calls := range callsByCaller {
-		output.WriteString(fmt.Sprintf("  %s:\n", caller))
+		output.WriteString(fmt.Sprintf("%s:\n", caller))
 		for _, call := range calls {
 			calledName := call.CalledFunction
 			if call.Package != "" {
 				calledName = call.Package + "." + call.CalledFunction
 			}
-			output.WriteString(fmt.Sprintf("    -> %s (line %d)\n", calledName, call.Line))
+			output.WriteString(fmt.Sprintf("  -> %s (line %d)\n", calledName, call.Line))
 		}
+		output.WriteString("\n")
 	}
 
-	output.WriteString(fmt.Sprintf("\nSummary: %d functions, %d calls\n", len(cg.Functions), len(cg.Calls)))
+	output.WriteString(fmt.Sprintf("Summary: %d functions, %d calls\n", len(cg.Functions), len(cg.Calls)))
 
 	return output.String()
 }
