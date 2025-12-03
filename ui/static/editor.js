@@ -1159,10 +1159,199 @@ function toggleTerminal() {
     alert('Terminal feature coming soon!');
 }
 
-function showStaticCallGraph() {
-    // Static Call Graph functionality placeholder
-    console.log('Static Call Graph - feature not yet implemented');
-    alert('Static Call Graph feature coming soon!\n\nThis will analyze Go code to show function call relationships and dependencies.');
+async function showStaticCallGraph() {
+    try {
+        console.log('📊 Fetching static call graph...');
+        
+        const response = await fetch('/api/callgraph');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const responseData = await response.json();
+        const callGraphData = responseData.content;
+        
+        // Parse the call graph into a tree structure
+        console.log('Raw call graph data:', callGraphData.substring(0, 500));
+        const callTree = parseCallGraph(callGraphData);
+        console.log('Parsed call tree:', callTree);
+        
+        // Clear existing content and show call graph
+        const fileTree = document.getElementById('fileTree');
+        fileTree.innerHTML = '';
+        
+        // Add header
+        const header = document.createElement('div');
+        header.className = 'view-header';
+        header.innerHTML = `
+            📊 Static Call Graph
+            <button onclick="loadFilesIntoExplorer()" style="margin-left: 10px; padding: 3px 8px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">
+                ← Back to Files
+            </button>
+        `;
+        fileTree.appendChild(header);
+        
+        // If parsing failed, show raw data as fallback
+        if (callTree.length === 0) {
+            const fallbackDiv = document.createElement('div');
+            fallbackDiv.style.cssText = 'padding: 10px; font-family: monospace; font-size: 12px; color: #ddd; white-space: pre-wrap; max-height: 400px; overflow: auto; background: #2d2d2d; margin: 10px 0; border-radius: 4px;';
+            fallbackDiv.textContent = callGraphData;
+            fileTree.appendChild(fallbackDiv);
+            
+            const debugDiv = document.createElement('div');
+            debugDiv.style.cssText = 'padding: 10px; color: #ff9999; font-size: 11px;';
+            debugDiv.textContent = 'Debug: Parser returned empty tree. Showing raw data above.';
+            fileTree.appendChild(debugDiv);
+        } else {
+            // Render the call tree
+            renderCallTree(fileTree, callTree);
+        }
+        
+        console.log('✅ Call graph displayed successfully');
+        
+    } catch (error) {
+        console.error('❌ Error fetching call graph:', error);
+        alert(`Failed to generate call graph: ${error.message}`);
+    }
+}
+
+function parseCallGraph(callGraphText) {
+    const lines = callGraphText.split('\n');
+    const tree = [];
+    let nodeStack = []; // Stack to track nested calls
+    
+    for (let line of lines) {
+        // Skip empty lines and headers
+        if (!line.trim() || line.includes('===') || line.includes('Summary:') || line.includes('Parsed ') || line.includes('Call Graph Mode') || line.includes('Processed ')) {
+            continue;
+        }
+        
+        // Check for root function (ends with colon, no indentation)
+        if (line.match(/^[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
+            const funcName = line.replace(':', '').trim();
+            const rootNode = {
+                name: funcName,
+                children: [],
+                isRoot: true,
+                expanded: true // Start expanded for root
+            };
+            tree.push(rootNode);
+            nodeStack = [rootNode]; // Reset stack with new root
+            continue;
+        }
+        
+        // Parse function calls with arrows - handle both -> and encoded \u003e arrows
+        // Also handle Unicode arrows and HTML entities
+        const normalizedLine = line.replace(/\\u003e/g, '>').replace(/&gt;/g, '>').replace(/→/g, '>');
+        const arrowMatch = normalizedLine.match(/^(\s+)->\s*(.+?)\s*\(line[s]?\s*([\d,\s]+)\)$/);
+        if (arrowMatch && nodeStack.length > 0) {
+            const [, spaces, funcName, lineNumbers] = arrowMatch;
+            
+            // Calculate indentation level (each 2 spaces = 1 level, but offset by 1 since root is level 0)
+            const indentLevel = Math.floor(spaces.length / 2);
+            
+            const node = {
+                name: funcName.trim(),
+                lines: lineNumbers.trim(),
+                children: [],
+                isRoot: false,
+                expanded: false
+            };
+            
+            // Adjust stack to correct level
+            while (nodeStack.length > indentLevel) {
+                nodeStack.pop();
+            }
+            
+            // Add to the appropriate parent (top of stack)
+            if (nodeStack.length > 0) {
+                nodeStack[nodeStack.length - 1].children.push(node);
+                nodeStack.push(node); // Push this node to stack for potential children
+            }
+        }
+    }
+    
+    return tree;
+}
+
+function renderCallTree(container, nodes, level = 0) {
+    nodes.forEach(node => {
+        const nodeItem = document.createElement('div');
+        nodeItem.className = 'call-graph-item';
+        nodeItem.style.paddingLeft = (level * 20) + 'px';
+        
+        const nodeContent = document.createElement('div');
+        nodeContent.className = 'call-graph-content';
+        nodeContent.style.display = 'flex';
+        nodeContent.style.alignItems = 'center';
+        nodeContent.style.padding = '2px 0';
+        nodeContent.style.cursor = 'pointer';
+        
+        // Add expand/collapse arrow if has children
+        const arrow = document.createElement('span');
+        arrow.className = 'call-graph-arrow';
+        arrow.style.marginRight = '5px';
+        arrow.style.width = '12px';
+        arrow.style.display = 'inline-block';
+        arrow.style.fontSize = '10px';
+        
+        if (node.children.length > 0) {
+            arrow.textContent = node.expanded ? '▼' : '▶';
+            arrow.style.cursor = 'pointer';
+        } else {
+            arrow.textContent = '';
+        }
+        
+        // Add function name
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = node.name;
+        nameSpan.style.color = node.isRoot ? '#4fc3f7' : '#e0e0e0';
+        nameSpan.style.fontWeight = node.isRoot ? 'bold' : 'normal';
+        
+        // Add line numbers if present
+        if (node.lines && !node.isRoot) {
+            const linesSpan = document.createElement('span');
+            linesSpan.textContent = ` (lines ${node.lines})`;
+            linesSpan.style.color = '#666';
+            linesSpan.style.fontSize = '11px';
+            linesSpan.style.marginLeft = '5px';
+            nodeContent.appendChild(nameSpan);
+            nodeContent.appendChild(linesSpan);
+        } else {
+            nodeContent.appendChild(nameSpan);
+        }
+        
+        nodeContent.insertBefore(arrow, nameSpan);
+        
+        // Add click handler for expand/collapse
+        if (node.children.length > 0) {
+            nodeContent.addEventListener('click', (e) => {
+                e.preventDefault();
+                node.expanded = !node.expanded;
+                arrow.textContent = node.expanded ? '▼' : '▶';
+                
+                // Show/hide children
+                const childrenContainer = nodeItem.querySelector('.call-graph-children');
+                if (childrenContainer) {
+                    childrenContainer.style.display = node.expanded ? 'block' : 'none';
+                }
+            });
+        }
+        
+        nodeItem.appendChild(nodeContent);
+        
+        // Add children container
+        if (node.children.length > 0) {
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = 'call-graph-children';
+            childrenContainer.style.display = node.expanded ? 'block' : 'none';
+            
+            renderCallTree(childrenContainer, node.children, level + 1);
+            nodeItem.appendChild(childrenContainer);
+        }
+        
+        container.appendChild(nodeItem);
+    });
 }
 
 async function showPackages() {
@@ -1420,6 +1609,19 @@ function closeFileDialog() {
     });
     
     document.getElementById('selectedFileName').value = '';
+}
+
+// Utility function to escape HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Function to load files back into explorer
+function loadFilesIntoExplorer() {
+    window.codeEditor?.switchSidePanel('explorer');
+    window.codeEditor?.loadFileTree();
 }
 
 // Initialize the IDE when page loads
