@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -210,6 +212,31 @@ func (p *Processor) executeMode() error {
 		} else {
 			fmt.Println("No compile commands found.")
 		}
+	case "workdir":
+		fmt.Println("=== Work Directory Mode ===")
+		if len(commands) == 0 {
+			fmt.Println("No commands found in log file.")
+			break
+		}
+
+		// Get the first command
+		firstCmd := commands[0]
+		fmt.Printf("First command: %s\n", firstCmd.Raw)
+
+		// Extract WORK= environment variable
+		workDir := extractWorkDir(firstCmd.Raw)
+		if workDir == "" {
+			fmt.Println("No WORK= environment variable found in first command.")
+			break
+		}
+
+		fmt.Printf("Found WORK directory: %s\n\n", workDir)
+
+		// Dump all directories and files in the work directory
+		if err := dumpWorkDir(workDir); err != nil {
+			fmt.Printf("Error dumping work directory: %v\n", err)
+		}
+
 	case "pack-files":
 		fmt.Println("=== Pack Files Mode ===")
 		compileCount := 0
@@ -319,4 +346,63 @@ func extractPackageName(cmd *Command) string {
 		}
 	}
 	return ""
+}
+
+// extractWorkDir extracts the WORK= environment variable from a command string
+func extractWorkDir(cmdLine string) string {
+	// Use regex to find WORK=<path> in the command line
+	re := regexp.MustCompile(`WORK=([^\s]+)`)
+	matches := re.FindStringSubmatch(cmdLine)
+	if len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
+}
+
+// dumpWorkDir recursively dumps all directories and files in the specified work directory
+func dumpWorkDir(workDir string) error {
+	// Check if the work directory exists
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		return fmt.Errorf("work directory does not exist: %s", workDir)
+	}
+
+	fmt.Printf("Contents of work directory: %s\n", workDir)
+	fmt.Println("=" + strings.Repeat("=", len(workDir)+27))
+
+	// Walk through the directory tree
+	err := filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			fmt.Printf("Error accessing %s: %v\n", path, err)
+			return nil // Continue walking
+		}
+
+		// Calculate relative path from work directory
+		relPath, err := filepath.Rel(workDir, path)
+		if err != nil {
+			relPath = path
+		}
+
+		// Calculate indentation level based on directory depth
+		depth := strings.Count(relPath, string(filepath.Separator))
+		indent := strings.Repeat("  ", depth)
+
+		if info.IsDir() {
+			if relPath == "." {
+				// Skip the root directory itself
+				return nil
+			}
+			fmt.Printf("%s📁 %s/\n", indent, filepath.Base(path))
+		} else {
+			// Show file with size
+			fmt.Printf("%s📄 %s (%d bytes)\n", indent, filepath.Base(path), info.Size())
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("error walking directory: %w", err)
+	}
+
+	return nil
 }

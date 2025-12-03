@@ -20,6 +20,7 @@ func ParseFlags() *Config {
 	flag.BoolVar(&config.PackFunctions, "pack-functions", false, "Extract and display functions from Go files in compile commands with -pack flag")
 	flag.BoolVar(&config.PackageNames, "pack-packages", false, "Extract and display package names from compile commands with -p flag")
 	flag.BoolVar(&config.CallGraph, "callgraph", false, "Generate and display call graph from Go files in compile commands")
+	flag.BoolVar(&config.WorkDir, "workdir", false, "Check first command and extract WORK directory, then dump all directories and files there")
 
 	flag.Parse()
 	return config
@@ -32,6 +33,8 @@ func (c *Config) GetExecutionMode() string {
 		return "json-capture"
 	case c.Capture:
 		return "capture"
+	case c.WorkDir:
+		return "workdir"
 	case c.CallGraph:
 		return "callgraph"
 	case c.PackageNames:
