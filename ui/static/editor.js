@@ -1456,10 +1456,59 @@ async function showPackages() {
     }
 }
 
-function showWorkDirectory() {
-    // Work Directory functionality placeholder
-    console.log('Work Directory view - feature not yet implemented');
-    alert('Work Directory feature coming soon!\n\nThis will show detailed information about the current working directory and project structure.');
+async function showWorkDirectory() {
+    try {
+        console.log('📁 Fetching work directory info...');
+        
+        const response = await fetch('/api/workdir');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const responseData = await response.json();
+        if (!responseData.success) {
+            throw new Error(responseData.error || 'Failed to fetch work directory');
+        }
+        
+        const workDirData = responseData.content;
+        
+        // Clear existing content and show work directory
+        const fileTree = document.getElementById('fileTree');
+        fileTree.innerHTML = '';
+        
+        // Add header
+        const header = document.createElement('div');
+        header.className = 'view-header';
+        header.innerHTML = `
+            📁 Work Directory
+            <button onclick="loadFilesIntoExplorer()" style="margin-left: 10px; padding: 3px 8px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">
+                ← Back to Files
+            </button>
+        `;
+        fileTree.appendChild(header);
+        
+        // Create content container
+        const content = document.createElement('div');
+        content.className = 'work-dir-content';
+        content.style.cssText = `
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            overflow-y: auto;
+            max-height: calc(100vh - 150px);
+        `;
+        
+        // Format the work directory output
+        content.textContent = workDirData;
+        
+        fileTree.appendChild(content);
+        
+    } catch (error) {
+        console.error('Error fetching work directory:', error);
+        alert(`Failed to generate work directory: ${error.message}`);
+    }
 }
 
 function toggleWordWrap() {

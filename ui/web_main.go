@@ -60,6 +60,7 @@ func main() {
 	http.HandleFunc("/api/pack-functions", getPackFunctions)
 	http.HandleFunc("/api/pack-packages", getPackPackages)
 	http.HandleFunc("/api/callgraph", getCallGraph)
+	http.HandleFunc("/api/workdir", getWorkDir)
 
 	fmt.Printf("🚀 Web Text Editor Server Starting...\n")
 	fmt.Printf("📝 Access the editor at: http://localhost:%s\n", *port)
@@ -720,6 +721,52 @@ func getCallGraph(w http.ResponseWriter, r *http.Request) {
 	// Execute the external command with absolute path
 	fmt.Printf("📍 Executing: %s --callgraph from directory: %s\n", execPath, rootDirectory)
 	cmd := exec.Command(execPath, "--callgraph")
+	cmd.Dir = rootDirectory // Set working directory to the root directory
+
+	// Capture both stdout and stderr
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+			err, execPath, rootDirectory, string(output))
+		sendErrorResponse(w, errorMsg)
+		return
+	}
+
+	// Return the command output
+	response := FileResponse{
+		Success: true,
+		Content: string(output),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func getWorkDir(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Log the operation
+	fmt.Printf("📁 Executing workdir command...\n")
+
+	// Get absolute path to go-build-interceptor executable
+	execPath, err := filepath.Abs("../go-build-interceptor")
+	if err != nil {
+		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
+		return
+	}
+
+	// Check if executable exists
+	if _, err := os.Stat(execPath); os.IsNotExist(err) {
+		sendErrorResponse(w, fmt.Sprintf("Executable not found at: %s", execPath))
+		return
+	}
+
+	// Execute the external command with absolute path
+	fmt.Printf("📍 Executing: %s --workdir from directory: %s\n", execPath, rootDirectory)
+	cmd := exec.Command(execPath, "--workdir")
 	cmd.Dir = rootDirectory // Set working directory to the root directory
 
 	// Capture both stdout and stderr
