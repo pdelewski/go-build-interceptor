@@ -958,7 +958,12 @@ async function showFunctions() {
                 // Add a header
                 const header = document.createElement('div');
                 header.className = 'view-header';
-                header.textContent = '⚙️ FUNCTIONS';
+                header.innerHTML = `
+                    ⚙️ FUNCTIONS
+                    <button onclick="loadFilesIntoExplorer()" style="margin-left: 10px; padding: 3px 8px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">
+                        ← Back to Files
+                    </button>
+                `;
                 fileTree.appendChild(header);
                 
                 // Group functions by file or show all
@@ -1065,7 +1070,12 @@ async function showFiles() {
                 // Add a header
                 const header = document.createElement('div');
                 header.className = 'view-header';
-                header.textContent = '📦 PACK FILES';
+                header.innerHTML = `
+                    📦 PACK FILES
+                    <button onclick="loadFilesIntoExplorer()" style="margin-left: 10px; padding: 3px 8px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">
+                        ← Back to Files
+                    </button>
+                `;
                 fileTree.appendChild(header);
                 
                 // Add each Go file as a clickable file item
@@ -1385,7 +1395,12 @@ async function showPackages() {
                 // Add a header
                 const header = document.createElement('div');
                 header.className = 'view-header';
-                header.textContent = '📦 PACKAGES';
+                header.innerHTML = `
+                    📦 PACKAGES
+                    <button onclick="loadFilesIntoExplorer()" style="margin-left: 10px; padding: 3px 8px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">
+                        ← Back to Files
+                    </button>
+                `;
                 fileTree.appendChild(header);
                 
                 // Display package information
