@@ -1247,7 +1247,7 @@ function parseCallGraph(callGraphText) {
         if (arrowMatch && nodeStack.length > 0) {
             const [, spaces, funcName, lineNumbers] = arrowMatch;
             
-            // Calculate indentation level (each 2 spaces = 1 level, but offset by 1 since root is level 0)
+            // Calculate indentation level (each 2 spaces = 1 level, starting from 1)
             const indentLevel = Math.floor(spaces.length / 2);
             
             const node = {
@@ -1278,7 +1278,7 @@ function renderCallTree(container, nodes, level = 0) {
     nodes.forEach(node => {
         const nodeItem = document.createElement('div');
         nodeItem.className = 'call-graph-item';
-        nodeItem.style.paddingLeft = (level * 20) + 'px';
+        nodeItem.style.paddingLeft = (level * 2) + 'px';
         
         const nodeContent = document.createElement('div');
         nodeContent.className = 'call-graph-content';
