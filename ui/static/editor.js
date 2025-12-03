@@ -1233,7 +1233,7 @@ function parseCallGraph(callGraphText) {
                 name: funcName,
                 children: [],
                 isRoot: true,
-                expanded: true // Start expanded for root
+                expanded: true // Start expanded by default
             };
             tree.push(rootNode);
             nodeStack = [rootNode]; // Reset stack with new root
@@ -1255,7 +1255,7 @@ function parseCallGraph(callGraphText) {
                 lines: lineNumbers.trim(),
                 children: [],
                 isRoot: false,
-                expanded: false
+                expanded: true
             };
             
             // Adjust stack to correct level
