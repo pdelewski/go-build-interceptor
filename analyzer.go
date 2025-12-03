@@ -279,12 +279,61 @@ func extractCallInfo(fset *token.FileSet, call *ast.CallExpr, filePath, currentF
 	case *ast.SelectorExpr:
 		// Qualified call: pkg.FuncName() or obj.Method()
 		if x, ok := fun.X.(*ast.Ident); ok {
-			fc.Package = x.Name
-			fc.CalledFunction = fun.Sel.Name
+			// Check if this looks like a method call on a local variable
+			// (starts with lowercase letter) vs a package call (uppercase or known packages)
+			if isLikelyMethodCall(x.Name) {
+				// Treat as local method call - we'll need to resolve the receiver type later
+				// For now, store the method name and mark as local call
+				fc.CalledFunction = fun.Sel.Name
+				fc.Package = "" // Mark as local call
+			} else {
+				// Treat as package call
+				fc.Package = x.Name
+				fc.CalledFunction = fun.Sel.Name
+			}
 		}
 	}
 
 	return fc
+}
+
+// isLikelyMethodCall determines if a selector is likely a method call vs a package call
+func isLikelyMethodCall(identifier string) bool {
+	// Variables typically start with lowercase letters
+	// Package names are usually lowercase but some standard packages start with uppercase
+	// We'll use a heuristic: if it starts with lowercase, it's likely a variable/method call
+	if len(identifier) == 0 {
+		return false
+	}
+
+	// Known standard library packages that might be confused
+	knownPackages := map[string]bool{
+		"fmt": true, "os": true, "log": true, "flag": true, "strings": true,
+		"strconv": true, "time": true, "json": true, "http": true, "io": true,
+		"ioutil": true, "filepath": true, "path": true, "net": true, "url": true,
+		"context": true, "sync": true, "errors": true, "sort": true, "math": true,
+		"rand": true, "crypto": true, "encoding": true, "reflect": true, "unsafe": true,
+		"runtime": true, "debug": true, "testing": true, "bytes": true, "bufio": true,
+		"regexp": true, "template": true, "html": true, "xml": true, "csv": true,
+		"compress": true, "archive": true, "database": true, "image": true,
+		"unicode": true, "utf8": true, "utf16": true, "mime": true, "base64": true,
+		"base32": true, "hex": true, "pem": true, "ascii85": true, "binary": true,
+		"gob": true, "tar": true, "zip": true, "gzip": true, "zlib": true, "bzip2": true,
+		"lzw": true, "flate": true, "sql": true, "driver": true, "color": true, "draw": true,
+		"gif": true, "jpeg": true, "png": true, "token": true, "scanner": true, "parser": true,
+		"ast": true, "doc": true, "format": true, "build": true, "constant": true, "importer": true,
+		"types": true, "gc": true, "prof": true, "pprof": true, "trace": true, "elf": true,
+		"macho": true, "pe": true, "plan9obj": true, "dwarf": true, "gosym": true,
+	}
+
+	// If it's a known package, treat as package call
+	if knownPackages[identifier] {
+		return false
+	}
+
+	// If starts with lowercase letter, likely a variable (method call)
+	firstChar := identifier[0]
+	return firstChar >= 'a' && firstChar <= 'z'
 }
 
 // BuildCallGraph builds a complete call graph from Go files
@@ -417,6 +466,20 @@ func buildCallChainFromMain(cg *CallGraph, callGraph map[string][]FunctionCall) 
 	reachableFromMain := make(map[string]bool)
 	visited := make(map[string]bool) // Separate visited tracker for DFS
 
+	// Build a method name to full signature mapping for method resolution
+	methodSignatures := make(map[string][]string)
+
+	for funcSig := range callGraph {
+		// Extract method name from signature like "(*Processor) Run("
+		if strings.Contains(funcSig, ") ") {
+			parts := strings.Split(funcSig, ") ")
+			if len(parts) >= 2 {
+				methodName := strings.Split(parts[1], "(")[0]
+				methodSignatures[methodName] = append(methodSignatures[methodName], funcSig)
+			}
+		}
+	}
+
 	// Find all main functions
 	mainFunctions := []string{}
 	for funcName := range callGraph {
@@ -462,7 +525,15 @@ func buildCallChainFromMain(cg *CallGraph, callGraph map[string][]FunctionCall) 
 
 			// For local calls, continue DFS
 			if call.Package == "" {
+				// First try direct function call
 				dfs(call.CalledFunction)
+
+				// Also try to find method implementations with this name
+				if methodSigs, exists := methodSignatures[call.CalledFunction]; exists {
+					for _, methodSig := range methodSigs {
+						dfs(methodSig)
+					}
+				}
 			}
 		}
 	}
@@ -748,6 +819,18 @@ func generateCallChainsFromMain(currentFunc string, callGraph map[string][]Funct
 		return
 	}
 
+	// Build method resolution mapping
+	methodSignatures := make(map[string][]string)
+	for funcSig := range callGraph {
+		if strings.Contains(funcSig, ") ") {
+			parts := strings.Split(funcSig, ") ")
+			if len(parts) >= 2 {
+				methodName := strings.Split(parts[1], "(")[0]
+				methodSignatures[methodName] = append(methodSignatures[methodName], funcSig)
+			}
+		}
+	}
+
 	// Group calls by function name to handle multiple calls to same function
 	callGroups := make(map[string][]FunctionCall)
 	for _, call := range calls {
@@ -755,15 +838,33 @@ func generateCallChainsFromMain(currentFunc string, callGraph map[string][]Funct
 		if call.Package != "" {
 			callee = call.Package + "." + callee
 		}
+
 		// Only include if reachable from main
 		if reachableFromMain[callee] || reachableFromMain[call.CalledFunction] {
 			callGroups[callee] = append(callGroups[callee], call)
+		} else if call.Package == "" {
+			// For local calls that aren't directly reachable, check method signatures
+			if methodSigs, exists := methodSignatures[call.CalledFunction]; exists {
+				for _, methodSig := range methodSigs {
+					if reachableFromMain[methodSig] {
+						// Use the method signature as the callee instead
+						callGroups[methodSig] = append(callGroups[methodSig], call)
+						break
+					}
+				}
+			}
 		}
 	}
 
 	for callee, callList := range callGroups {
 		// Show the call with line number
 		line := callLineMap[currentFunc][callee]
+
+		// If line is 0, use the first call's line number (for method resolution cases)
+		if line == 0 && len(callList) > 0 {
+			line = callList[0].Line
+		}
+
 		if len(callList) > 1 {
 			// Multiple calls to same function, show count
 			lines := make([]string, len(callList))
@@ -777,13 +878,34 @@ func generateCallChainsFromMain(currentFunc string, callGraph map[string][]Funct
 
 		output.WriteString("\n")
 
-		// Always recurse for local functions that are reachable from main
-		if callList[0].Package == "" && reachableFromMain[callList[0].CalledFunction] {
+		// For method signatures, recurse on the method signature itself
+		if strings.Contains(callee, ") ") && reachableFromMain[callee] {
 			subVisited := make(map[string]bool)
 			for k, v := range visited {
 				subVisited[k] = v
 			}
-			generateCallChainsFromMain(callList[0].CalledFunction, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+			generateCallChainsFromMain(callee, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+		} else if callList[0].Package == "" {
+			// For local calls, check if they map to method signatures and recurse on those
+			if methodSigs, exists := methodSignatures[callList[0].CalledFunction]; exists {
+				for _, methodSig := range methodSigs {
+					if reachableFromMain[methodSig] {
+						subVisited := make(map[string]bool)
+						for k, v := range visited {
+							subVisited[k] = v
+						}
+						generateCallChainsFromMain(methodSig, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+						break
+					}
+				}
+			} else if reachableFromMain[callList[0].CalledFunction] {
+				// For regular local functions that are reachable from main
+				subVisited := make(map[string]bool)
+				for k, v := range visited {
+					subVisited[k] = v
+				}
+				generateCallChainsFromMain(callList[0].CalledFunction, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+			}
 		}
 	}
 }
