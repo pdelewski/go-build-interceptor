@@ -6,14 +6,14 @@ func bar2() {
 }
 
 func bar1() {
-  bar2()
+	bar2()
 }
 
 func foo() {
-  bar1()
+	bar1()
 }
 
 func main() {
-  fmt.Println("hello")
-  foo()
+	fmt.Println("hello")
+	foo()
 }

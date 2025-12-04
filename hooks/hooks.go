@@ -48,6 +48,11 @@ type HookContext struct {
 type BeforeHook func(hookCtx *HookContext) error
 type AfterHook func(hookCtx *HookContext) error
 
+// HookProvider interface that users must implement to provide their hooks
+type HookProvider interface {
+	ProvideHooks() []*Hook
+}
+
 // Validation
 func (h *Hook) Validate() error {
 	if h.Target.Package == "" {

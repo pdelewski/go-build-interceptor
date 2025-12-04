@@ -16,6 +16,38 @@ func (m *mockResponseWriter) Header() http.Header        { return make(http.Head
 func (m *mockResponseWriter) Write([]byte) (int, error) { return 0, nil }
 func (m *mockResponseWriter) WriteHeader(statusCode int) {}
 
+// Example implementation of HookProvider
+type MyInstrumentation struct{}
+
+func (m *MyInstrumentation) ProvideHooks() []*Hook {
+	return []*Hook{
+		{
+			Target: InjectTarget{
+				Package:  "net/http",
+				Function: "ServeHTTP",
+				Receiver: "serverHandler",
+			},
+			Hooks: InjectFunctions{
+				Before: "BeforeServeHTTP",
+				After:  "AfterServeHTTP",
+				From:   "github.com/yourorg/instrumentation/nethttp/server",
+			},
+		},
+		{
+			Target: InjectTarget{
+				Package:  "database/sql",
+				Function: "Query",
+				Receiver: "DB",
+			},
+			Hooks: InjectFunctions{
+				Before: "BeforeQuery",
+				After:  "AfterQuery",
+				From:   "github.com/yourorg/instrumentation/sql",
+			},
+		},
+	}
+}
+
 // Example implementation of HTTP server hooks
 func BeforeServeHTTP(ctx *HookContext) error {
 	// Type assert the arguments
@@ -175,6 +207,29 @@ func TestManualHookCreation(t *testing.T) {
 	if err := customHook.Validate(); err != nil {
 		t.Errorf("Custom hook validation failed: %v", err)
 	}
+}
+
+func TestHookProvider(t *testing.T) {
+	// Create an instance of the instrumentation provider
+	provider := &MyInstrumentation{}
+	
+	// Get the hooks from the provider
+	hooks := provider.ProvideHooks()
+	
+	// Verify we got the expected number of hooks
+	if len(hooks) != 2 {
+		t.Errorf("Expected 2 hooks from provider, got %d", len(hooks))
+	}
+	
+	// Validate all provided hooks
+	for i, hook := range hooks {
+		if err := hook.Validate(); err != nil {
+			t.Errorf("Hook %d validation failed: %v", i, err)
+		}
+	}
+	
+	// Verify the interface is properly implemented
+	var _ HookProvider = (*MyInstrumentation)(nil)
 }
 
 func TestHookContext(t *testing.T) {
