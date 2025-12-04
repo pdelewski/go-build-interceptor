@@ -124,6 +124,27 @@ func (p *Processor) executeMode() error {
 		} else {
 			fmt.Println("No package names found in compile commands.")
 		}
+	case "pack-packagepath":
+		fmt.Println("=== Pack Package Path Mode ===")
+		compileCount := 0
+		packagePaths := extractPackagePathInfo(commands)
+
+		// Count compile commands
+		for _, cmd := range commands {
+			if isCompileCommand(&cmd) {
+				compileCount++
+			}
+		}
+
+		if len(packagePaths) > 0 {
+			fmt.Printf("Found %d unique packages with paths in %d compile commands:\n\n", len(packagePaths), compileCount)
+			for pkg, path := range packagePaths {
+				fmt.Printf("  - Package: %s\n", pkg)
+				fmt.Printf("    Path: %s\n", path)
+			}
+		} else {
+			fmt.Println("No package paths found in compile commands.")
+		}
 	case "pack-functions":
 		fmt.Println("=== Pack Functions Mode ===")
 		compileCount := 0
@@ -356,6 +377,130 @@ func extractWorkDir(cmdLine string) string {
 	if len(matches) >= 2 {
 		return matches[1]
 	}
+	return ""
+}
+
+// extractPackagePathInfo extracts package names and their common source paths from compile commands
+func extractPackagePathInfo(commands []Command) map[string]string {
+	packagePaths := make(map[string]string)
+	packageFiles := make(map[string][]string) // Package name -> list of file paths
+
+	// Collect all files for each package
+	for _, cmd := range commands {
+		if isCompileCommand(&cmd) {
+			packageName := extractPackageName(&cmd)
+			if packageName != "" {
+				files := extractPackFiles(&cmd)
+				for _, file := range files {
+					if strings.HasSuffix(file, ".go") {
+						if packageFiles[packageName] == nil {
+							packageFiles[packageName] = []string{}
+						}
+						packageFiles[packageName] = append(packageFiles[packageName], file)
+					}
+				}
+			}
+		}
+	}
+
+	// Find common path for each package
+	for pkg, files := range packageFiles {
+		if len(files) > 0 {
+			// Find the common directory path for all files in this package
+			commonPath := findCommonPath(files)
+			packagePaths[pkg] = commonPath
+		}
+	}
+
+	return packagePaths
+}
+
+// findCommonPath finds the common directory path for a list of file paths
+func findCommonPath(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+
+	// For a single file, just return its directory
+	if len(files) == 1 {
+		return filepath.Dir(files[0])
+	}
+
+	// Start with the directory of the first file
+	commonDir := filepath.Dir(files[0])
+
+	// Check each subsequent file to find the common prefix
+	for _, file := range files[1:] {
+		fileDir := filepath.Dir(file)
+
+		// Find the longest common directory prefix
+		commonDir = findLongestCommonDir(commonDir, fileDir)
+
+		// If we've reduced to nothing or current directory, stop
+		if commonDir == "" || commonDir == "." {
+			break
+		}
+	}
+
+	return commonDir
+}
+
+// findLongestCommonDir finds the longest common directory between two paths
+func findLongestCommonDir(dir1, dir2 string) string {
+	// Handle absolute paths properly
+	if filepath.IsAbs(dir1) && filepath.IsAbs(dir2) {
+		// Clean the paths first
+		dir1 = filepath.Clean(dir1)
+		dir2 = filepath.Clean(dir2)
+
+		// Split by separator
+		parts1 := strings.Split(dir1, string(filepath.Separator))
+		parts2 := strings.Split(dir2, string(filepath.Separator))
+
+		// Find common parts
+		var common []string
+		minLen := len(parts1)
+		if len(parts2) < minLen {
+			minLen = len(parts2)
+		}
+
+		for i := 0; i < minLen; i++ {
+			if parts1[i] == parts2[i] {
+				common = append(common, parts1[i])
+			} else {
+				break
+			}
+		}
+
+		if len(common) == 0 {
+			return ""
+		}
+
+		// For absolute paths on Unix, need to handle the leading slash
+		if dir1[0] == '/' && len(common) > 0 && common[0] == "" {
+			// First element is empty due to leading slash
+			if len(common) == 1 {
+				return "/"
+			}
+			return "/" + filepath.Join(common[1:]...)
+		}
+
+		return filepath.Join(common...)
+	}
+
+	// For relative paths or mixed absolute/relative, use simpler logic
+	if dir1 == dir2 {
+		return dir1
+	}
+
+	// Try to find common prefix by going up directories
+	for dir1 != "" && dir1 != "." && dir1 != "/" {
+		if strings.HasPrefix(dir2, dir1) {
+			return dir1
+		}
+		dir1 = filepath.Dir(dir1)
+	}
+
 	return ""
 }
 
