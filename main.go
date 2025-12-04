@@ -127,7 +127,7 @@ func (p *Processor) executeMode() error {
 	case "pack-packagepath":
 		fmt.Println("=== Pack Package Path Mode ===")
 		compileCount := 0
-		packagePaths := extractPackagePathInfo(commands)
+		packageInfo := extractPackagePathInfo(commands)
 
 		// Count compile commands
 		for _, cmd := range commands {
@@ -136,11 +136,12 @@ func (p *Processor) executeMode() error {
 			}
 		}
 
-		if len(packagePaths) > 0 {
-			fmt.Printf("Found %d unique packages with paths in %d compile commands:\n\n", len(packagePaths), compileCount)
-			for pkg, path := range packagePaths {
+		if len(packageInfo) > 0 {
+			fmt.Printf("Found %d unique packages with paths in %d compile commands:\n\n", len(packageInfo), compileCount)
+			for pkg, info := range packageInfo {
 				fmt.Printf("  - Package: %s\n", pkg)
-				fmt.Printf("    Path: %s\n", path)
+				fmt.Printf("    Path: %s\n", info.Path)
+				fmt.Printf("    Work: %s\n", info.BuildID)
 			}
 		} else {
 			fmt.Println("No package paths found in compile commands.")
@@ -369,6 +370,12 @@ func extractPackageName(cmd *Command) string {
 	return ""
 }
 
+// PackagePathInfo holds package path and build information
+type PackagePathInfo struct {
+	Path    string
+	BuildID string
+}
+
 // extractWorkDir extracts the WORK= environment variable from a command string
 func extractWorkDir(cmdLine string) string {
 	// Use regex to find WORK=<path> in the command line
@@ -380,16 +387,49 @@ func extractWorkDir(cmdLine string) string {
 	return ""
 }
 
-// extractPackagePathInfo extracts package names and their common source paths from compile commands
-func extractPackagePathInfo(commands []Command) map[string]string {
-	packagePaths := make(map[string]string)
-	packageFiles := make(map[string][]string) // Package name -> list of file paths
+// extractBuildID extracts the build ID from the -o flag value (e.g., b107 from $WORK/b107/_pkg_.a)
+func extractBuildID(outputPath string) string {
+	// Pattern to match $WORK/b###/_pkg_.a or similar
+	re := regexp.MustCompile(`\$WORK/([^/]+)/`)
+	matches := re.FindStringSubmatch(outputPath)
+	if len(matches) >= 2 {
+		return matches[1]
+	}
+	return ""
+}
 
-	// Collect all files for each package
+// extractOutputPath extracts the path after the -o flag in a compile command
+func extractOutputPath(cmd *Command) string {
+	// Find the -o flag
+	for i, arg := range cmd.Args {
+		if arg == "-o" && i+1 < len(cmd.Args) {
+			return cmd.Args[i+1]
+		}
+	}
+	return ""
+}
+
+// extractPackagePathInfo extracts package names and their common source paths from compile commands
+func extractPackagePathInfo(commands []Command) map[string]PackagePathInfo {
+	packageInfo := make(map[string]PackagePathInfo)
+	packageFiles := make(map[string][]string)  // Package name -> list of file paths
+	packageBuildIDs := make(map[string]string) // Package name -> build ID
+
+	// Collect all files and build IDs for each package
 	for _, cmd := range commands {
 		if isCompileCommand(&cmd) {
 			packageName := extractPackageName(&cmd)
 			if packageName != "" {
+				// Extract build ID from -o flag
+				outputPath := extractOutputPath(&cmd)
+				if outputPath != "" {
+					buildID := extractBuildID(outputPath)
+					if buildID != "" {
+						packageBuildIDs[packageName] = buildID
+					}
+				}
+
+				// Extract files
 				files := extractPackFiles(&cmd)
 				for _, file := range files {
 					if strings.HasSuffix(file, ".go") {
@@ -403,16 +443,21 @@ func extractPackagePathInfo(commands []Command) map[string]string {
 		}
 	}
 
-	// Find common path for each package
+	// Find common path for each package and combine with build ID
 	for pkg, files := range packageFiles {
+		info := PackagePathInfo{}
 		if len(files) > 0 {
 			// Find the common directory path for all files in this package
-			commonPath := findCommonPath(files)
-			packagePaths[pkg] = commonPath
+			info.Path = findCommonPath(files)
 		}
+		// Add build ID if found
+		if buildID, ok := packageBuildIDs[pkg]; ok {
+			info.BuildID = buildID
+		}
+		packageInfo[pkg] = info
 	}
 
-	return packagePaths
+	return packageInfo
 }
 
 // findCommonPath finds the common directory path for a list of file paths
@@ -423,7 +468,14 @@ func findCommonPath(files []string) string {
 
 	// For a single file, just return its directory
 	if len(files) == 1 {
-		return filepath.Dir(files[0])
+		dir := filepath.Dir(files[0])
+		// Convert relative path to absolute
+		if !filepath.IsAbs(dir) {
+			if absDir, err := filepath.Abs(dir); err == nil {
+				dir = absDir
+			}
+		}
+		return dir
 	}
 
 	// Start with the directory of the first file
@@ -439,6 +491,13 @@ func findCommonPath(files []string) string {
 		// If we've reduced to nothing or current directory, stop
 		if commonDir == "" || commonDir == "." {
 			break
+		}
+	}
+
+	// Convert relative path to absolute before returning
+	if !filepath.IsAbs(commonDir) {
+		if absDir, err := filepath.Abs(commonDir); err == nil {
+			commonDir = absDir
 		}
 	}
 
