@@ -43,7 +43,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 	return []*hooks.Hook{
 		{
 			Target: hooks.InjectTarget{
-				Package:  "github.com/pdelewski/go-build-interceptor/hello",
+				Package:  "main",
 				Function: "main",
 				Receiver: "",
 			},
@@ -55,7 +55,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 		},
 		{
 			Target: hooks.InjectTarget{
-				Package:  "github.com/pdelewski/go-build-interceptor/hello",
+				Package:  "main",
 				Function: "foo",
 				Receiver: "",
 			},
@@ -67,7 +67,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 		},
 		{
 			Target: hooks.InjectTarget{
-				Package:  "github.com/pdelewski/go-build-interceptor/hello",
+				Package:  "main",
 				Function: "bar1",
 				Receiver: "",
 			},
@@ -79,7 +79,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 		},
 		{
 			Target: hooks.InjectTarget{
-				Package:  "github.com/pdelewski/go-build-interceptor/hello",
+				Package:  "main",
 				Function: "bar2",
 				Receiver: "",
 			},
