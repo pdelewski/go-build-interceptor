@@ -27,7 +27,7 @@ func (m *MyInstrumentation) ProvideHooks() []*Hook {
 				Function: "ServeHTTP",
 				Receiver: "serverHandler",
 			},
-			Hooks: InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "BeforeServeHTTP",
 				After:  "AfterServeHTTP",
 				From:   "github.com/yourorg/instrumentation/nethttp/server",
@@ -39,7 +39,7 @@ func (m *MyInstrumentation) ProvideHooks() []*Hook {
 				Function: "Query",
 				Receiver: "DB",
 			},
-			Hooks: InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "BeforeQuery",
 				After:  "AfterQuery",
 				From:   "github.com/yourorg/instrumentation/sql",
@@ -116,7 +116,7 @@ func TestHookFramework(t *testing.T) {
 				Function: "ServeHTTP",
 				Receiver: "serverHandler",
 			},
-			Hooks: InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "BeforeServeHTTP",
 				After:  "AfterServeHTTP",
 				From:   "github.com/yourorg/instrumentation/nethttp/server",
@@ -128,7 +128,7 @@ func TestHookFramework(t *testing.T) {
 				Function: "Query",
 				Receiver: "DB",
 			},
-			Hooks: InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "BeforeQuery",
 				After:  "AfterQuery",
 				From:   "github.com/yourorg/instrumentation/sql",
@@ -157,7 +157,7 @@ func TestManualHookCreation(t *testing.T) {
 			Function: "ServeHTTP",
 			Receiver: "serverHandler",
 		},
-		Hooks: InjectFunctions{
+		Hooks: &InjectFunctions{
 			Before: "BeforeServeHTTP",
 			After:  "AfterServeHTTP",
 			From:   "github.com/yourorg/instrumentation/nethttp/server",
@@ -179,7 +179,7 @@ func TestManualHookCreation(t *testing.T) {
 			Function: "Query",
 			Receiver: "DB",
 		},
-		Hooks: InjectFunctions{
+		Hooks: &InjectFunctions{
 			Before: "BeforeQuery",
 			After:  "AfterQuery",
 			From:   "github.com/yourorg/instrumentation/sql",
@@ -197,7 +197,7 @@ func TestManualHookCreation(t *testing.T) {
 			Function: "ProcessOrder",
 			Receiver: "OrderService",
 		},
-		Hooks: InjectFunctions{
+		Hooks: &InjectFunctions{
 			Before: "BeforeProcessOrder",
 			After:  "AfterProcessOrder",
 			From:   "github.com/myorg/instrumentation/orders",
@@ -272,7 +272,7 @@ func ExampleRegistry() {
 				Function: "ServeHTTP",
 				Receiver: "serverHandler",
 			},
-			Hooks: InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "BeforeServeHTTP",
 				After:  "AfterServeHTTP",
 				From:   "github.com/yourorg/instrumentation/nethttp/server",
@@ -284,7 +284,7 @@ func ExampleRegistry() {
 				Function: "Query",
 				Receiver: "DB",
 			},
-			Hooks: InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "BeforeQuery",
 				After:  "AfterQuery",
 				From:   "github.com/yourorg/instrumentation/sql",
@@ -296,7 +296,7 @@ func ExampleRegistry() {
 				Function: "ProcessPayment",
 				Receiver: "PaymentService",
 			},
-			Hooks: InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "BeforeProcessPayment",
 				After:  "AfterProcessPayment",
 				From:   "github.com/myorg/instrumentation/payment",

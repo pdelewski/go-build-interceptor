@@ -3,13 +3,18 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"go/ast"
 	"time"
 )
 
+// FunctionRewriteHook allows complete rewriting of a function's AST
+type FunctionRewriteHook func(originalNode ast.Node) (ast.Node, error)
+
 // Core hook definition
 type Hook struct {
-	Target InjectTarget
-	Hooks  InjectFunctions
+	Target  InjectTarget
+	Hooks   *InjectFunctions     // Optional: for before/after hooks
+	Rewrite FunctionRewriteHook  // Optional: for rewriting entire function
 }
 
 type InjectTarget struct {
@@ -61,18 +66,23 @@ func (h *Hook) Validate() error {
 	if h.Target.Function == "" {
 		return fmt.Errorf("target function is required")
 	}
-	if h.Target.Receiver == "" {
-		return fmt.Errorf("target receiver is required")
+	// Receiver can be empty for package-level functions
+	
+	// Must have either Hooks or Rewrite, but not necessarily both
+	if h.Hooks == nil && h.Rewrite == nil {
+		return fmt.Errorf("either Hooks or Rewrite must be specified")
 	}
-	if h.Hooks.Before == "" {
-		return fmt.Errorf("before hook function name is required")
+	
+	// If Hooks is specified, validate it
+	if h.Hooks != nil {
+		if h.Hooks.Before == "" && h.Hooks.After == "" {
+			return fmt.Errorf("at least one of Before or After hook must be specified")
+		}
+		if h.Hooks.From == "" {
+			return fmt.Errorf("hook package path is required when using Hooks")
+		}
 	}
-	if h.Hooks.After == "" {
-		return fmt.Errorf("after hook function name is required")
-	}
-	if h.Hooks.From == "" {
-		return fmt.Errorf("hook package path is required")
-	}
+	
 	return nil
 }
 

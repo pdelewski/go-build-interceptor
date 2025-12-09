@@ -2,6 +2,8 @@ package hello_hook
 
 import (
 	"fmt"
+	"go/ast"
+	"go/token"
 	"github.com/pdelewski/go-build-interceptor/hooks"
 )
 
@@ -11,41 +13,41 @@ type HelloHookProvider struct{}
 // ProvideHooks returns the hook definitions for the hello module functions
 func (h *HelloHookProvider) ProvideHooks() []*hooks.Hook {
 	return []*hooks.Hook{
+		// Traditional before/after hooks
 		{
 			Target: hooks.InjectTarget{
 				Package:  "main",
 				Function: "foo",
 				Receiver: "",
 			},
-			Hooks: hooks.InjectFunctions{
+			Hooks: &hooks.InjectFunctions{
 				Before: "BeforeFoo",
 				After:  "AfterFoo",
 				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
 			},
 		},
+		// Example of function rewrite
 		{
 			Target: hooks.InjectTarget{
 				Package:  "main",
 				Function: "bar1",
 				Receiver: "",
 			},
-			Hooks: hooks.InjectFunctions{
-				Before: "BeforeBar1",
-				After:  "AfterBar1",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
-			},
+			Rewrite: RewriteBar1,
 		},
+		// Combination: both hooks and rewrite
 		{
 			Target: hooks.InjectTarget{
 				Package:  "main",
 				Function: "bar2",
 				Receiver: "",
 			},
-			Hooks: hooks.InjectFunctions{
+			Hooks: &hooks.InjectFunctions{
 				Before: "BeforeBar2",
 				After:  "AfterBar2",
 				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
 			},
+			Rewrite: RewriteBar2,
 		},
 		{
 			Target: hooks.InjectTarget{
@@ -53,7 +55,7 @@ func (h *HelloHookProvider) ProvideHooks() []*hooks.Hook {
 				Function: "main",
 				Receiver: "",
 			},
-			Hooks: hooks.InjectFunctions{
+			Hooks: &hooks.InjectFunctions{
 				Before: "BeforeMain",
 				After:  "AfterMain",
 				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
@@ -73,18 +75,122 @@ func AfterFoo(ctx *hooks.HookContext) error {
 	return nil
 }
 
-// Hook implementations for bar1 function
-func BeforeBar1(ctx *hooks.HookContext) error {
-	fmt.Printf("[%s] Starting bar1()\n", ctx.Function)
-	return nil
+// RewriteBar1 demonstrates complete function rewriting
+func RewriteBar1(originalNode ast.Node) (ast.Node, error) {
+	funcDecl, ok := originalNode.(*ast.FuncDecl)
+	if !ok {
+		return nil, fmt.Errorf("expected *ast.FuncDecl, got %T", originalNode)
+	}
+	
+	// Change function signature: add a string parameter and string return type
+	funcDecl.Type.Params = &ast.FieldList{
+		List: []*ast.Field{
+			{
+				Names: []*ast.Ident{ast.NewIdent("name")},
+				Type:  ast.NewIdent("string"),
+			},
+		},
+	}
+	
+	funcDecl.Type.Results = &ast.FieldList{
+		List: []*ast.Field{
+			{
+				Type: ast.NewIdent("string"),
+			},
+		},
+	}
+	
+	// Create new function body
+	funcDecl.Body = &ast.BlockStmt{
+		List: []ast.Stmt{
+			// return fmt.Sprintf("Hello from rewritten bar1, %s!", name)
+			&ast.ReturnStmt{
+				Results: []ast.Expr{
+					&ast.CallExpr{
+						Fun: &ast.SelectorExpr{
+							X:   ast.NewIdent("fmt"),
+							Sel: ast.NewIdent("Sprintf"),
+						},
+						Args: []ast.Expr{
+							&ast.BasicLit{
+								Kind:  token.STRING,
+								Value: `"Hello from rewritten bar1, %s!"`,
+							},
+							ast.NewIdent("name"),
+						},
+					},
+				},
+			},
+		},
+	}
+	
+	return funcDecl, nil
 }
 
-func AfterBar1(ctx *hooks.HookContext) error {
-	fmt.Printf("[%s] Completed bar1() in %v\n", ctx.Function, ctx.Duration)
-	return nil
+// RewriteBar2 demonstrates rewriting while still allowing hooks
+func RewriteBar2(originalNode ast.Node) (ast.Node, error) {
+	funcDecl, ok := originalNode.(*ast.FuncDecl)
+	if !ok {
+		return nil, fmt.Errorf("expected *ast.FuncDecl, got %T", originalNode)
+	}
+	
+	// Add an int parameter
+	funcDecl.Type.Params = &ast.FieldList{
+		List: []*ast.Field{
+			{
+				Names: []*ast.Ident{ast.NewIdent("count")},
+				Type:  ast.NewIdent("int"),
+			},
+		},
+	}
+	
+	// Simple body that uses the parameter
+	funcDecl.Body = &ast.BlockStmt{
+		List: []ast.Stmt{
+			// for i := 0; i < count; i++
+			&ast.ForStmt{
+				Init: &ast.AssignStmt{
+					Lhs: []ast.Expr{ast.NewIdent("i")},
+					Tok: token.DEFINE,
+					Rhs: []ast.Expr{&ast.BasicLit{Kind: token.INT, Value: "0"}},
+				},
+				Cond: &ast.BinaryExpr{
+					X:  ast.NewIdent("i"),
+					Op: token.LSS,
+					Y:  ast.NewIdent("count"),
+				},
+				Post: &ast.IncDecStmt{
+					X:   ast.NewIdent("i"),
+					Tok: token.INC,
+				},
+				Body: &ast.BlockStmt{
+					List: []ast.Stmt{
+						// fmt.Printf("Iteration %d\n", i)
+						&ast.ExprStmt{
+							X: &ast.CallExpr{
+								Fun: &ast.SelectorExpr{
+									X:   ast.NewIdent("fmt"),
+									Sel: ast.NewIdent("Printf"),
+								},
+								Args: []ast.Expr{
+									&ast.BasicLit{
+										Kind:  token.STRING,
+										Value: `"Iteration %d\n"`,
+									},
+									ast.NewIdent("i"),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	
+	return funcDecl, nil
 }
 
-// Hook implementations for bar2 function
+// BeforeBar2 hook implementation
 func BeforeBar2(ctx *hooks.HookContext) error {
 	fmt.Printf("[%s] Starting bar2()\n", ctx.Function)
 	return nil
