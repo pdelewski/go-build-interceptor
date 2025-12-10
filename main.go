@@ -234,6 +234,16 @@ func (p *Processor) executeMode() error {
 		} else {
 			fmt.Println("No compile commands found.")
 		}
+	case "compile":
+		fmt.Println("=== Compile Mode ===")
+		if p.config.HooksFile == "" {
+			fmt.Println("Error: No hooks file specified. Use --compile <hooks_file> or -c <hooks_file>")
+			break
+		}
+
+		if err := processCompileWithHooks(commands, p.config.HooksFile); err != nil {
+			fmt.Printf("Error in compile mode: %v\n", err)
+		}
 	case "workdir":
 		fmt.Println("=== Work Directory Mode ===")
 		if len(commands) == 0 {

@@ -24,6 +24,8 @@ type Config struct {
 	CallGraph       bool
 	WorkDir         bool
 	PackPackagePath bool
+	Compile         bool
+	HooksFile       string
 }
 
 // Capturer interface for different capture methods

@@ -22,8 +22,15 @@ func ParseFlags() *Config {
 	flag.BoolVar(&config.CallGraph, "callgraph", false, "Generate and display call graph from Go files in compile commands")
 	flag.BoolVar(&config.WorkDir, "workdir", false, "Check first command and extract WORK directory, then dump all directories and files there")
 	flag.BoolVar(&config.PackPackagePath, "pack-packagepath", false, "Extract and display package names with their source paths from compile commands")
+	flag.StringVar(&config.HooksFile, "compile", "", "Parse hooks file and match against functions in compile commands")
+	flag.StringVar(&config.HooksFile, "c", "", "Parse hooks file and match against functions in compile commands (short for --compile)")
 
 	flag.Parse()
+
+	// If HooksFile is provided, set Compile to true
+	if config.HooksFile != "" {
+		config.Compile = true
+	}
 	return config
 }
 
@@ -34,6 +41,8 @@ func (c *Config) GetExecutionMode() string {
 		return "json-capture"
 	case c.Capture:
 		return "capture"
+	case c.Compile:
+		return "compile"
 	case c.WorkDir:
 		return "workdir"
 	case c.PackPackagePath:

@@ -13,8 +13,8 @@ type FunctionRewriteHook func(originalNode ast.Node) (ast.Node, error)
 // Core hook definition
 type Hook struct {
 	Target  InjectTarget
-	Hooks   *InjectFunctions     // Optional: for before/after hooks
-	Rewrite FunctionRewriteHook  // Optional: for rewriting entire function
+	Hooks   *InjectFunctions    // Optional: for before/after hooks
+	Rewrite FunctionRewriteHook // Optional: for rewriting entire function
 }
 
 type InjectTarget struct {
@@ -67,12 +67,12 @@ func (h *Hook) Validate() error {
 		return fmt.Errorf("target function is required")
 	}
 	// Receiver can be empty for package-level functions
-	
+
 	// Must have either Hooks or Rewrite, but not necessarily both
 	if h.Hooks == nil && h.Rewrite == nil {
 		return fmt.Errorf("either Hooks or Rewrite must be specified")
 	}
-	
+
 	// If Hooks is specified, validate it
 	if h.Hooks != nil {
 		if h.Hooks.Before == "" && h.Hooks.After == "" {
@@ -82,7 +82,7 @@ func (h *Hook) Validate() error {
 			return fmt.Errorf("hook package path is required when using Hooks")
 		}
 	}
-	
+
 	return nil
 }
 
