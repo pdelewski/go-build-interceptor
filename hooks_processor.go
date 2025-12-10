@@ -218,6 +218,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 	matchCount := 0
 	packagesWithMatches := make(map[string]bool) // Track packages that have matches
 	copiedFiles := make(map[string]bool)         // Track files already copied per package
+	fileReplacements := make(map[string]string)  // Track original file -> instrumented file mapping
 
 	// Process each compile command
 	for cmdIdx, cmd := range commands {
@@ -280,10 +281,16 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 				copyKey := packageName + ":" + file
 				if !copiedFiles[copyKey] {
 					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
-						if err := copyAndInstrumentFile(file, workDir, pkgInfo.BuildID, packageName, hooks); err != nil {
+						instrumentedFilePath := filepath.Join(workDir, pkgInfo.BuildID, "src", filepath.Base(file))
+						if err := copyAndInstrumentFileOnly(file, workDir, pkgInfo.BuildID, packageName, hooks); err != nil {
 							fmt.Printf("           ⚠️  Failed to copy and instrument file: %v\n", err)
 						} else {
 							copiedFiles[copyKey] = true
+							// Track the file replacement mapping - only for Go files
+							if strings.HasSuffix(file, ".go") {
+								fileReplacements[file] = instrumentedFilePath
+								fmt.Printf("           🔄 Will replace %s with %s in compile command\n", file, instrumentedFilePath)
+							}
 						}
 					}
 				}
@@ -306,6 +313,23 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 				fmt.Printf("  - %s (BuildID: %s, Path: %s)\n", pkg, info.BuildID, info.Path)
 			} else {
 				fmt.Printf("  - %s (no build info found)\n", pkg)
+			}
+		}
+	}
+
+	// Generate modified build log with updated file paths
+	if len(fileReplacements) > 0 {
+		if err := generateModifiedBuildLog(commands, fileReplacements); err != nil {
+			fmt.Printf("⚠️  Failed to generate modified build log: %v\n", err)
+		} else {
+			fmt.Printf("\n📄 Generated modified build log: go-build-modified.log\n")
+
+			// Execute commands from the modified build log using existing functionality
+			fmt.Printf("\n🚀 Executing commands from modified build log...\n")
+			if err := executeModifiedBuildLogWithParser("go-build-modified.log"); err != nil {
+				fmt.Printf("⚠️  Failed to execute modified build log: %v\n", err)
+			} else {
+				fmt.Printf("✅ Successfully executed all commands from modified build log\n")
 			}
 		}
 	}
@@ -335,6 +359,14 @@ func copyAndInstrumentFile(sourceFile string, workDir string, buildID string, pa
 	}
 
 	fmt.Printf("           📄 Copied and instrumented %s to %s\n", sourceBaseName, targetFile)
+
+	// Replace the original source file with the instrumented version
+	if err := replaceOriginalWithInstrumented(sourceFile, targetFile); err != nil {
+		fmt.Printf("           ⚠️  Failed to replace original file: %v\n", err)
+	} else {
+		fmt.Printf("           🔄 Replaced original %s with instrumented version\n", sourceBaseName)
+	}
+
 	return nil
 }
 
@@ -453,64 +485,86 @@ func instrumentFile(sourceFile, targetFile string, packageName string, hooks []H
 
 // addTrampolineFunctions adds empty trampoline function definitions to the AST
 func addTrampolineFunctions(node *ast.File, hooks []HookDefinition) {
+	// Track which trampoline functions have already been added
+	existingTrampolines := make(map[string]bool)
+
+	// Check for existing trampoline functions
+	for _, decl := range node.Decls {
+		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
+			if strings.HasPrefix(funcDecl.Name.Name, "trampoline_") {
+				existingTrampolines[funcDecl.Name.Name] = true
+			}
+		}
+	}
+
 	for _, hook := range hooks {
 		if hook.Type == "before_after" || hook.Type == "both" {
-			// Create trampoline_BeforeXXX function
-			beforeFunc := &ast.FuncDecl{
-				Name: ast.NewIdent("trampoline_Before" + capitalizeFirst(hook.Function)),
-				Type: &ast.FuncType{
-					Params:  &ast.FieldList{},
-					Results: nil,
-				},
-				Body: &ast.BlockStmt{
-					List: []ast.Stmt{
-						&ast.ExprStmt{
-							X: &ast.CallExpr{
-								Fun: &ast.SelectorExpr{
-									X:   ast.NewIdent("fmt"),
-									Sel: ast.NewIdent("Println"),
-								},
-								Args: []ast.Expr{
-									&ast.BasicLit{
-										Kind:  token.STRING,
-										Value: fmt.Sprintf("\"[TRAMPOLINE] Before %s\"", hook.Function),
+			beforeFuncName := "trampoline_Before" + capitalizeFirst(hook.Function)
+			afterFuncName := "trampoline_After" + capitalizeFirst(hook.Function)
+
+			// Only add if not already present
+			if !existingTrampolines[beforeFuncName] {
+				// Create trampoline_BeforeXXX function
+				beforeFunc := &ast.FuncDecl{
+					Name: ast.NewIdent(beforeFuncName),
+					Type: &ast.FuncType{
+						Params:  &ast.FieldList{},
+						Results: nil,
+					},
+					Body: &ast.BlockStmt{
+						List: []ast.Stmt{
+							&ast.ExprStmt{
+								X: &ast.CallExpr{
+									Fun: &ast.SelectorExpr{
+										X:   ast.NewIdent("fmt"),
+										Sel: ast.NewIdent("Println"),
+									},
+									Args: []ast.Expr{
+										&ast.BasicLit{
+											Kind:  token.STRING,
+											Value: fmt.Sprintf("\"[TRAMPOLINE] Before %s\"", hook.Function),
+										},
 									},
 								},
 							},
 						},
 					},
-				},
+				}
+				node.Decls = append(node.Decls, beforeFunc)
+				existingTrampolines[beforeFuncName] = true
 			}
 
-			// Create trampoline_AfterXXX function
-			afterFunc := &ast.FuncDecl{
-				Name: ast.NewIdent("trampoline_After" + capitalizeFirst(hook.Function)),
-				Type: &ast.FuncType{
-					Params:  &ast.FieldList{},
-					Results: nil,
-				},
-				Body: &ast.BlockStmt{
-					List: []ast.Stmt{
-						&ast.ExprStmt{
-							X: &ast.CallExpr{
-								Fun: &ast.SelectorExpr{
-									X:   ast.NewIdent("fmt"),
-									Sel: ast.NewIdent("Println"),
-								},
-								Args: []ast.Expr{
-									&ast.BasicLit{
-										Kind:  token.STRING,
-										Value: fmt.Sprintf("\"[TRAMPOLINE] After %s\"", hook.Function),
+			// Only add if not already present
+			if !existingTrampolines[afterFuncName] {
+				// Create trampoline_AfterXXX function
+				afterFunc := &ast.FuncDecl{
+					Name: ast.NewIdent(afterFuncName),
+					Type: &ast.FuncType{
+						Params:  &ast.FieldList{},
+						Results: nil,
+					},
+					Body: &ast.BlockStmt{
+						List: []ast.Stmt{
+							&ast.ExprStmt{
+								X: &ast.CallExpr{
+									Fun: &ast.SelectorExpr{
+										X:   ast.NewIdent("fmt"),
+										Sel: ast.NewIdent("Println"),
+									},
+									Args: []ast.Expr{
+										&ast.BasicLit{
+											Kind:  token.STRING,
+											Value: fmt.Sprintf("\"[TRAMPOLINE] After %s\"", hook.Function),
+										},
 									},
 								},
 							},
 						},
 					},
-				},
+				}
+				node.Decls = append(node.Decls, afterFunc)
+				existingTrampolines[afterFuncName] = true
 			}
-
-			// Add the functions to the file's declarations
-			node.Decls = append(node.Decls, beforeFunc, afterFunc)
 		}
 	}
 }
@@ -519,6 +573,19 @@ func addTrampolineFunctions(node *ast.File, hooks []HookDefinition) {
 func instrumentFunction(funcDecl *ast.FuncDecl, hook *HookDefinition) {
 	if funcDecl.Body == nil {
 		return
+	}
+
+	// Check if function is already instrumented by looking for existing trampoline calls
+	trampolineName := "trampoline_Before" + capitalizeFirst(hook.Function)
+	for _, stmt := range funcDecl.Body.List {
+		if exprStmt, ok := stmt.(*ast.ExprStmt); ok {
+			if callExpr, ok := exprStmt.X.(*ast.CallExpr); ok {
+				if ident, ok := callExpr.Fun.(*ast.Ident); ok && ident.Name == trampolineName {
+					// Already instrumented, skip
+					return
+				}
+			}
+		}
 	}
 
 	// Create before call
@@ -547,4 +614,135 @@ func capitalizeFirst(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// replaceOriginalWithInstrumented replaces the original source file with the instrumented version
+func replaceOriginalWithInstrumented(originalFile, instrumentedFile string) error {
+	// First, backup the original file
+	backupFile := originalFile + ".backup"
+	if err := copyFile(originalFile, backupFile); err != nil {
+		return fmt.Errorf("failed to backup original file: %w", err)
+	}
+
+	// Replace the original with the instrumented version
+	if err := copyFile(instrumentedFile, originalFile); err != nil {
+		// If replacement fails, restore from backup
+		copyFile(backupFile, originalFile)
+		return fmt.Errorf("failed to replace original file: %w", err)
+	}
+
+	return nil
+}
+
+// copyFile copies a file from src to dst
+func copyFile(src, dst string) error {
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	destination, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destination.Close()
+
+	_, err = io.Copy(destination, source)
+	return err
+}
+
+// copyAndInstrumentFileOnly copies and instruments a source file without replacing the original
+func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string, packageName string, hooks []HookDefinition) error {
+	if workDir == "" || buildID == "" {
+		return fmt.Errorf("missing work directory or build ID")
+	}
+
+	// Create the target directory: $WORK/buildID/src/
+	targetDir := filepath.Join(workDir, buildID, "src")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
+	}
+
+	// Determine target file path
+	sourceBaseName := filepath.Base(sourceFile)
+	targetFile := filepath.Join(targetDir, sourceBaseName)
+
+	// Instrument the file instead of just copying
+	if err := instrumentFile(sourceFile, targetFile, packageName, hooks); err != nil {
+		return fmt.Errorf("failed to instrument file: %w", err)
+	}
+
+	fmt.Printf("           📄 Copied and instrumented %s to %s\n", sourceBaseName, targetFile)
+	return nil
+}
+
+// generateModifiedBuildLog generates a new build log with updated file paths for instrumented files
+func generateModifiedBuildLog(commands []Command, fileReplacements map[string]string) error {
+	outputFile := "go-build-modified.log"
+
+	file, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create modified build log: %w", err)
+	}
+	defer file.Close()
+
+	for _, cmd := range commands {
+		modifiedCommand := cmd.Raw
+
+		// If this is a compile command, check if we need to replace any file paths
+		if isCompileCommand(&cmd) {
+			// Replace file paths in the command - but only for Go files
+			for originalFile, instrumentedFile := range fileReplacements {
+				// Only replace if the original file is a .go file
+				if !strings.HasSuffix(originalFile, ".go") {
+					continue
+				}
+
+				// Replace both absolute and relative paths
+				modifiedCommand = strings.ReplaceAll(modifiedCommand, originalFile, instrumentedFile)
+
+				// Also try replacing just the filename in case the command uses relative paths
+				originalBasename := filepath.Base(originalFile)
+				instrumentedBasename := filepath.Base(instrumentedFile)
+				if originalBasename != instrumentedBasename {
+					modifiedCommand = strings.ReplaceAll(modifiedCommand, originalBasename, instrumentedFile)
+				} else {
+					// If basenames are the same, we need to replace the full path context
+					// Look for the file in -pack arguments
+					modifiedCommand = strings.ReplaceAll(modifiedCommand, " "+originalBasename+" ", " "+instrumentedFile+" ")
+					modifiedCommand = strings.ReplaceAll(modifiedCommand, " "+originalBasename+"$", " "+instrumentedFile)
+				}
+			}
+		}
+
+		// Write the (potentially modified) command to the new log file
+		if _, err := fmt.Fprintf(file, "%s\n", modifiedCommand); err != nil {
+			return fmt.Errorf("failed to write command to modified build log: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// executeModifiedBuildLogWithParser executes the modified build log using the existing Parser functionality
+func executeModifiedBuildLogWithParser(logFile string) error {
+	// Create a new parser and parse the modified log file
+	modifiedParser := NewParser()
+	if err := modifiedParser.ParseFile(logFile); err != nil {
+		return fmt.Errorf("failed to parse modified log file: %w", err)
+	}
+
+	// Generate the script but don't execute it yet
+	if err := modifiedParser.GenerateScript(); err != nil {
+		return fmt.Errorf("failed to generate script from modified log file: %w", err)
+	}
+
+	// Now execute the script with proper error handling
+	fmt.Printf("Generated script from modified build log. Running replay_script.sh...\n")
+	if err := modifiedParser.ExecuteScript(); err != nil {
+		return fmt.Errorf("failed to execute modified build script: %w", err)
+	}
+
+	return nil
 }
