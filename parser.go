@@ -222,8 +222,20 @@ func (p *Parser) ExecuteAll() error {
 }
 
 func (p *Parser) ExecuteScript() error {
-	// Execute the generated script
-	shellCmd := exec.Command("sh", "replay_script.sh")
+	scriptPath := "replay_script.sh"
+
+	// Check if script file exists in current directory
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return fmt.Errorf("replay script does not exist: %s", scriptPath)
+	}
+
+	// Execute the script from current directory with explicit bash and environment
+	shellCmd := exec.Command("bash", scriptPath)
+
+	// Explicitly inherit all environment variables
+	shellCmd.Env = os.Environ()
+
+	// Set up IO streams
 	shellCmd.Stdout = os.Stdout
 	shellCmd.Stderr = os.Stderr
 	shellCmd.Stdin = os.Stdin
