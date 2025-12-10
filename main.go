@@ -40,8 +40,8 @@ func NewProcessor(config *Config) *Processor {
 func (p *Processor) Run() error {
 	mode := p.config.GetExecutionMode()
 
-	// Capture modes don't need to parse log file
-	if mode != "capture" && mode != "json-capture" {
+	// Capture and compile modes don't need to parse log file initially
+	if mode != "capture" && mode != "json-capture" && mode != "compile" {
 		// Parse the log file
 		if err := p.parser.ParseFile(p.config.LogFile); err != nil {
 			return fmt.Errorf("error parsing file: %w", err)
@@ -241,6 +241,25 @@ func (p *Processor) executeMode() error {
 			break
 		}
 
+		// First capture the build log like --json does
+		fmt.Println("Capturing build output...")
+		capturer := &JSONCapturer{}
+		if err := capturer.Capture(); err != nil {
+			fmt.Printf("Error capturing build output: %v\n", err)
+			break
+		}
+		fmt.Println(capturer.GetDescription())
+
+		// Now parse the generated log file
+		if err := p.parser.ParseFile(p.config.LogFile); err != nil {
+			fmt.Printf("Error parsing captured log file: %v\n", err)
+			break
+		}
+
+		commands = p.parser.GetCommands()
+		fmt.Printf("Parsed %d commands from captured build\n\n", len(commands))
+
+		// Process with hooks
 		if err := processCompileWithHooks(commands, p.config.HooksFile); err != nil {
 			fmt.Printf("Error in compile mode: %v\n", err)
 		}
