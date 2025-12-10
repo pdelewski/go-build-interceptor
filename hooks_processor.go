@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"io"
@@ -274,13 +275,13 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 				}
 			}
 
-			// Copy the source file to work directory if it has matches and hasn't been copied yet
+			// Copy and instrument the source file to work directory if it has matches and hasn't been copied yet
 			if fileHasMatches && workDir != "" {
 				copyKey := packageName + ":" + file
 				if !copiedFiles[copyKey] {
 					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
-						if err := copyFileToWorkDir(file, workDir, pkgInfo.BuildID); err != nil {
-							fmt.Printf("           ⚠️  Failed to copy file: %v\n", err)
+						if err := copyAndInstrumentFile(file, workDir, pkgInfo.BuildID, packageName, hooks); err != nil {
+							fmt.Printf("           ⚠️  Failed to copy and instrument file: %v\n", err)
 						} else {
 							copiedFiles[copyKey] = true
 						}
@@ -309,6 +310,31 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 		}
 	}
 
+	return nil
+}
+
+// copyAndInstrumentFile copies and instruments a source file to the work directory for a package
+func copyAndInstrumentFile(sourceFile string, workDir string, buildID string, packageName string, hooks []HookDefinition) error {
+	if workDir == "" || buildID == "" {
+		return fmt.Errorf("missing work directory or build ID")
+	}
+
+	// Create the target directory: $WORK/buildID/src/
+	targetDir := filepath.Join(workDir, buildID, "src")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
+	}
+
+	// Determine target file path
+	sourceBaseName := filepath.Base(sourceFile)
+	targetFile := filepath.Join(targetDir, sourceBaseName)
+
+	// Instrument the file instead of just copying
+	if err := instrumentFile(sourceFile, targetFile, packageName, hooks); err != nil {
+		return fmt.Errorf("failed to instrument file: %w", err)
+	}
+
+	fmt.Printf("           📄 Copied and instrumented %s to %s\n", sourceBaseName, targetFile)
 	return nil
 }
 
@@ -359,4 +385,166 @@ func extractWorkDirFromCommands(commands []Command) string {
 		}
 	}
 	return ""
+}
+
+// instrumentFile instruments a Go file with trampoline functions and calls
+func instrumentFile(sourceFile, targetFile string, packageName string, hooks []HookDefinition) error {
+	// Parse the source file
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, sourceFile, nil, parser.ParseComments)
+	if err != nil {
+		return fmt.Errorf("failed to parse source file %s: %w", sourceFile, err)
+	}
+
+	// Track which hooks apply to functions in this file
+	var applicableHooks []HookDefinition
+	var instrumentedFunctions []string
+
+	// Find functions that match hooks
+	for _, decl := range node.Decls {
+		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
+			funcInfo := &FunctionInfo{
+				Name:     funcDecl.Name.Name,
+				Receiver: "",
+			}
+
+			// Extract receiver if it's a method
+			if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+				if ident, ok := funcDecl.Recv.List[0].Type.(*ast.Ident); ok {
+					funcInfo.Receiver = ident.Name
+				}
+			}
+
+			// Check if this function matches any hook
+			if match := matchFunctionWithHooks(packageName, funcInfo, hooks); match != nil {
+				if match.Type == "before_after" || match.Type == "both" {
+					applicableHooks = append(applicableHooks, *match)
+					instrumentedFunctions = append(instrumentedFunctions, funcDecl.Name.Name)
+
+					// Instrument the function
+					instrumentFunction(funcDecl, match)
+				}
+			}
+		}
+	}
+
+	// Add trampoline function definitions if we have applicable hooks
+	if len(applicableHooks) > 0 {
+		addTrampolineFunctions(node, applicableHooks)
+	}
+
+	// Write the instrumented file
+	file, err := os.Create(targetFile)
+	if err != nil {
+		return fmt.Errorf("failed to create target file %s: %w", targetFile, err)
+	}
+	defer file.Close()
+
+	if err := format.Node(file, fset, node); err != nil {
+		return fmt.Errorf("failed to format and write instrumented file: %w", err)
+	}
+
+	if len(instrumentedFunctions) > 0 {
+		fmt.Printf("           🔧 Instrumented functions: %s\n", strings.Join(instrumentedFunctions, ", "))
+	}
+
+	return nil
+}
+
+// addTrampolineFunctions adds empty trampoline function definitions to the AST
+func addTrampolineFunctions(node *ast.File, hooks []HookDefinition) {
+	for _, hook := range hooks {
+		if hook.Type == "before_after" || hook.Type == "both" {
+			// Create trampoline_BeforeXXX function
+			beforeFunc := &ast.FuncDecl{
+				Name: ast.NewIdent("trampoline_Before" + capitalizeFirst(hook.Function)),
+				Type: &ast.FuncType{
+					Params:  &ast.FieldList{},
+					Results: nil,
+				},
+				Body: &ast.BlockStmt{
+					List: []ast.Stmt{
+						&ast.ExprStmt{
+							X: &ast.CallExpr{
+								Fun: &ast.SelectorExpr{
+									X:   ast.NewIdent("fmt"),
+									Sel: ast.NewIdent("Println"),
+								},
+								Args: []ast.Expr{
+									&ast.BasicLit{
+										Kind:  token.STRING,
+										Value: fmt.Sprintf("\"[TRAMPOLINE] Before %s\"", hook.Function),
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Create trampoline_AfterXXX function
+			afterFunc := &ast.FuncDecl{
+				Name: ast.NewIdent("trampoline_After" + capitalizeFirst(hook.Function)),
+				Type: &ast.FuncType{
+					Params:  &ast.FieldList{},
+					Results: nil,
+				},
+				Body: &ast.BlockStmt{
+					List: []ast.Stmt{
+						&ast.ExprStmt{
+							X: &ast.CallExpr{
+								Fun: &ast.SelectorExpr{
+									X:   ast.NewIdent("fmt"),
+									Sel: ast.NewIdent("Println"),
+								},
+								Args: []ast.Expr{
+									&ast.BasicLit{
+										Kind:  token.STRING,
+										Value: fmt.Sprintf("\"[TRAMPOLINE] After %s\"", hook.Function),
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+
+			// Add the functions to the file's declarations
+			node.Decls = append(node.Decls, beforeFunc, afterFunc)
+		}
+	}
+}
+
+// instrumentFunction adds trampoline calls to the beginning and end of a function
+func instrumentFunction(funcDecl *ast.FuncDecl, hook *HookDefinition) {
+	if funcDecl.Body == nil {
+		return
+	}
+
+	// Create before call
+	beforeCall := &ast.ExprStmt{
+		X: &ast.CallExpr{
+			Fun: ast.NewIdent("trampoline_Before" + capitalizeFirst(hook.Function)),
+		},
+	}
+
+	// Create after call (using defer to ensure it runs even if function panics)
+	afterCall := &ast.DeferStmt{
+		Call: &ast.CallExpr{
+			Fun: ast.NewIdent("trampoline_After" + capitalizeFirst(hook.Function)),
+		},
+	}
+
+	// Insert at the beginning of the function
+	newBody := []ast.Stmt{beforeCall, afterCall}
+	newBody = append(newBody, funcDecl.Body.List...)
+	funcDecl.Body.List = newBody
+}
+
+// capitalizeFirst capitalizes the first letter of a string
+func capitalizeFirst(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
