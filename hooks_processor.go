@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -191,6 +193,15 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 	fmt.Printf("=== Compile Mode with Hooks ===\n")
 	fmt.Printf("Loaded %d hook definitions from %s\n\n", len(hooks), filepath.Base(hooksFile))
 
+	// Get package path information using existing functionality
+	packageInfo := extractPackagePathInfo(commands)
+
+	// Extract work directory
+	workDir := extractWorkDirFromCommands(commands)
+	if workDir != "" {
+		fmt.Printf("Work directory: %s\n", workDir)
+	}
+
 	// Display loaded hooks
 	fmt.Println("Hook Definitions:")
 	for _, hook := range hooks {
@@ -204,6 +215,8 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 	compileCount := 0
 	matchCount := 0
+	packagesWithMatches := make(map[string]bool) // Track packages that have matches
+	copiedFiles := make(map[string]bool)         // Track files already copied per package
 
 	// Process each compile command
 	for cmdIdx, cmd := range commands {
@@ -221,6 +234,8 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 		fmt.Printf("Command %d: Package '%s' with %d files\n", cmdIdx+1, packageName, len(files))
 
+		packageHasMatches := false
+
 		// Process each Go file
 		for _, file := range files {
 			if !strings.HasSuffix(file, ".go") {
@@ -233,10 +248,14 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 				continue
 			}
 
+			fileHasMatches := false
+
 			// Check each function against hooks
 			for _, fn := range functions {
 				if match := matchFunctionWithHooks(packageName, &fn, hooks); match != nil {
 					matchCount++
+					packageHasMatches = true
+					fileHasMatches = true
 					fmt.Printf("  ✓ MATCH: %s:%s", filepath.Base(file), fn.Name)
 					if fn.Receiver != "" {
 						fmt.Printf(" (receiver: %s)", fn.Receiver)
@@ -254,10 +273,90 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 					}
 				}
 			}
+
+			// Copy the source file to work directory if it has matches and hasn't been copied yet
+			if fileHasMatches && workDir != "" {
+				copyKey := packageName + ":" + file
+				if !copiedFiles[copyKey] {
+					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
+						if err := copyFileToWorkDir(file, workDir, pkgInfo.BuildID); err != nil {
+							fmt.Printf("           ⚠️  Failed to copy file: %v\n", err)
+						} else {
+							copiedFiles[copyKey] = true
+						}
+					}
+				}
+			}
+		}
+
+		// Mark this package as having matches
+		if packageHasMatches {
+			packagesWithMatches[packageName] = true
 		}
 	}
 
-	fmt.Printf("\nSummary: Processed %d compile commands, found %d hook matches\n", compileCount, matchCount)
+	fmt.Printf("\nSummary: Processed %d compile commands, found %d hook matches in %d packages\n",
+		compileCount, matchCount, len(packagesWithMatches))
+
+	if len(packagesWithMatches) > 0 {
+		fmt.Println("Packages with hook matches:")
+		for pkg := range packagesWithMatches {
+			if info, exists := packageInfo[pkg]; exists {
+				fmt.Printf("  - %s (BuildID: %s, Path: %s)\n", pkg, info.BuildID, info.Path)
+			} else {
+				fmt.Printf("  - %s (no build info found)\n", pkg)
+			}
+		}
+	}
 
 	return nil
+}
+
+// copyFileToWorkDir copies a source file to the work directory for a package
+func copyFileToWorkDir(sourceFile string, workDir string, buildID string) error {
+	if workDir == "" || buildID == "" {
+		return fmt.Errorf("missing work directory or build ID")
+	}
+
+	// Create the target directory: $WORK/buildID/src/
+	targetDir := filepath.Join(workDir, buildID, "src")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
+	}
+
+	// Copy the source file to the target directory
+	sourceBaseName := filepath.Base(sourceFile)
+	targetFile := filepath.Join(targetDir, sourceBaseName)
+
+	// Open source file
+	src, err := os.Open(sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to open source file %s: %w", sourceFile, err)
+	}
+	defer src.Close()
+
+	// Create target file
+	dst, err := os.Create(targetFile)
+	if err != nil {
+		return fmt.Errorf("failed to create target file %s: %w", targetFile, err)
+	}
+	defer dst.Close()
+
+	// Copy content
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to copy file content: %w", err)
+	}
+
+	fmt.Printf("           📄 Copied %s to %s\n", sourceBaseName, targetFile)
+	return nil
+}
+
+// extractWorkDirFromCommands extracts the work directory from commands
+func extractWorkDirFromCommands(commands []Command) string {
+	for _, cmd := range commands {
+		if workDir := extractWorkDir(cmd.Raw); workDir != "" {
+			return workDir
+		}
+	}
+	return ""
 }
