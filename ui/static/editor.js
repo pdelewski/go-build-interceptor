@@ -1358,84 +1358,222 @@ function parseCallGraph(callGraphText) {
     return tree;
 }
 
+// Track selected call graph item
+let selectedCallGraphItem = null;
+
 function renderCallTree(container, nodes, level = 0) {
     nodes.forEach(node => {
         const nodeItem = document.createElement('div');
         nodeItem.className = 'call-graph-item';
-        nodeItem.style.paddingLeft = (level * 2) + 'px';
-        
+        nodeItem.style.paddingLeft = (level * 16) + 'px';
+
         const nodeContent = document.createElement('div');
         nodeContent.className = 'call-graph-content';
-        nodeContent.style.display = 'flex';
-        nodeContent.style.alignItems = 'center';
-        nodeContent.style.padding = '2px 0';
-        nodeContent.style.cursor = 'pointer';
-        
+        nodeContent.style.cssText = `
+            display: flex;
+            align-items: center;
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 3px;
+            margin: 1px 0;
+            transition: background-color 0.15s;
+        `;
+
         // Add expand/collapse arrow if has children
         const arrow = document.createElement('span');
         arrow.className = 'call-graph-arrow';
-        arrow.style.marginRight = '5px';
-        arrow.style.width = '12px';
-        arrow.style.display = 'inline-block';
-        arrow.style.fontSize = '10px';
-        
+        arrow.style.cssText = `
+            margin-right: 6px;
+            width: 14px;
+            display: inline-block;
+            font-size: 10px;
+            text-align: center;
+            color: #888;
+        `;
+
         if (node.children.length > 0) {
             arrow.textContent = node.expanded ? '▼' : '▶';
             arrow.style.cursor = 'pointer';
         } else {
-            arrow.textContent = '';
+            arrow.textContent = '•';
+            arrow.style.color = '#555';
         }
-        
+
+        // Add function icon
+        const icon = document.createElement('span');
+        icon.style.cssText = 'margin-right: 6px; font-size: 12px;';
+        icon.textContent = node.isRoot ? '🔵' : '⚡';
+
         // Add function name
         const nameSpan = document.createElement('span');
+        nameSpan.className = 'call-graph-func-name';
         nameSpan.textContent = node.name;
-        nameSpan.style.color = node.isRoot ? '#4fc3f7' : '#e0e0e0';
-        nameSpan.style.fontWeight = node.isRoot ? 'bold' : 'normal';
-        
+        nameSpan.style.cssText = `
+            color: ${node.isRoot ? '#4fc3f7' : '#9cdcfe'};
+            font-weight: ${node.isRoot ? 'bold' : 'normal'};
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 13px;
+        `;
+
         // Add line numbers if present
+        let linesSpan = null;
         if (node.lines && !node.isRoot) {
-            const linesSpan = document.createElement('span');
-            linesSpan.textContent = ` (lines ${node.lines})`;
-            linesSpan.style.color = '#666';
-            linesSpan.style.fontSize = '11px';
-            linesSpan.style.marginLeft = '5px';
-            nodeContent.appendChild(nameSpan);
-            nodeContent.appendChild(linesSpan);
-        } else {
-            nodeContent.appendChild(nameSpan);
+            linesSpan = document.createElement('span');
+            linesSpan.className = 'call-graph-lines';
+            linesSpan.textContent = ` (line${node.lines.includes(',') ? 's' : ''} ${node.lines})`;
+            linesSpan.style.cssText = `
+                color: #6a9955;
+                font-size: 11px;
+                margin-left: 6px;
+                font-family: 'Consolas', 'Courier New', monospace;
+            `;
         }
-        
-        nodeContent.insertBefore(arrow, nameSpan);
-        
-        // Add click handler for expand/collapse
-        if (node.children.length > 0) {
-            nodeContent.addEventListener('click', (e) => {
-                e.preventDefault();
+
+        nodeContent.appendChild(arrow);
+        nodeContent.appendChild(icon);
+        nodeContent.appendChild(nameSpan);
+        if (linesSpan) {
+            nodeContent.appendChild(linesSpan);
+        }
+
+        // Add hover effects
+        nodeContent.addEventListener('mouseenter', () => {
+            if (nodeContent !== selectedCallGraphItem) {
+                nodeContent.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+            }
+        });
+        nodeContent.addEventListener('mouseleave', () => {
+            if (nodeContent !== selectedCallGraphItem) {
+                nodeContent.style.backgroundColor = '';
+            }
+        });
+
+        // Add click handler for selection and expand/collapse
+        nodeContent.addEventListener('click', (e) => {
+            e.stopPropagation();
+
+            // Clear previous selection
+            if (selectedCallGraphItem && selectedCallGraphItem !== nodeContent) {
+                selectedCallGraphItem.style.backgroundColor = '';
+                selectedCallGraphItem.style.outline = '';
+            }
+
+            // Select this item
+            selectedCallGraphItem = nodeContent;
+            nodeContent.style.backgroundColor = 'rgba(0, 122, 204, 0.3)';
+            nodeContent.style.outline = '1px solid rgba(0, 122, 204, 0.5)';
+
+            // Log selection
+            console.log('📊 Selected call graph item:', node.name, node.lines ? `at line(s) ${node.lines}` : '');
+
+            // Try to navigate to the function if we can find it
+            if (node.lines && !node.isRoot) {
+                const lineNum = parseInt(node.lines.split(',')[0].trim());
+                if (!isNaN(lineNum)) {
+                    // Try to find and open the file containing this function
+                    tryNavigateToFunction(node.name, lineNum);
+                }
+            }
+
+            // Toggle expand/collapse if has children
+            if (node.children.length > 0) {
                 node.expanded = !node.expanded;
                 arrow.textContent = node.expanded ? '▼' : '▶';
-                
-                // Show/hide children
+
                 const childrenContainer = nodeItem.querySelector('.call-graph-children');
                 if (childrenContainer) {
                     childrenContainer.style.display = node.expanded ? 'block' : 'none';
                 }
-            });
-        }
-        
+            }
+        });
+
         nodeItem.appendChild(nodeContent);
-        
+
         // Add children container
         if (node.children.length > 0) {
             const childrenContainer = document.createElement('div');
             childrenContainer.className = 'call-graph-children';
             childrenContainer.style.display = node.expanded ? 'block' : 'none';
-            
+
             renderCallTree(childrenContainer, node.children, level + 1);
             nodeItem.appendChild(childrenContainer);
         }
-        
+
         container.appendChild(nodeItem);
     });
+}
+
+// Try to navigate to a function by looking up the Functions view data
+async function tryNavigateToFunction(funcName, lineNum) {
+    try {
+        // First, check if we have an open file that might contain this function
+        console.log(`🔍 Looking for function: ${funcName}`);
+
+        // Try to fetch pack-functions to find the file
+        const response = await fetch('/api/pack-functions');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const functionsData = data.content;
+
+        // Parse functions data to find the file containing this function
+        const lines = functionsData.split('\n');
+        let currentFile = '';
+
+        for (const line of lines) {
+            // Check for file line (ends with .go:)
+            if (line.match(/^\S+\.go:$/)) {
+                currentFile = line.slice(0, -1); // Remove trailing colon
+            }
+            // Check if this line contains our function
+            else if (line.includes(funcName)) {
+                // Extract just the function name from the line for comparison
+                const match = line.match(/^\s*(?:func\s+)?(?:\([^)]+\)\s+)?(\w+)/);
+                if (match && match[1] === funcName && currentFile) {
+                    console.log(`📂 Found ${funcName} in ${currentFile}`);
+
+                    // Open the file and try to go to the line
+                    if (window.codeEditor) {
+                        await window.codeEditor.openFile(currentFile);
+                        // Give the editor time to load, then scroll to line
+                        setTimeout(() => {
+                            scrollToLine(lineNum);
+                        }, 200);
+                    }
+                    return;
+                }
+            }
+        }
+
+        console.log(`⚠️ Could not find file for function: ${funcName}`);
+    } catch (error) {
+        console.error('Error navigating to function:', error);
+    }
+}
+
+// Scroll editor to a specific line
+function scrollToLine(lineNum) {
+    const editor = document.getElementById('editor');
+    if (!editor) return;
+
+    const lines = editor.value.split('\n');
+    if (lineNum > lines.length) return;
+
+    // Calculate character position for the target line
+    let charPos = 0;
+    for (let i = 0; i < lineNum - 1; i++) {
+        charPos += lines[i].length + 1; // +1 for newline
+    }
+
+    // Set cursor position and scroll
+    editor.focus();
+    editor.setSelectionRange(charPos, charPos + lines[lineNum - 1].length);
+
+    // Scroll to make the line visible
+    const lineHeight = parseInt(getComputedStyle(editor).lineHeight) || 20;
+    editor.scrollTop = (lineNum - 5) * lineHeight; // Show some context above
+
+    console.log(`📍 Scrolled to line ${lineNum}`);
 }
 
 async function showPackages() {
