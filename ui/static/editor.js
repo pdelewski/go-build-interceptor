@@ -1272,6 +1272,9 @@ async function showStaticCallGraph() {
                 <span>📊 Static Call Graph</span>
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <span id="callGraphSelectionCount" style="color: #4fc3f7; font-size: 11px; display: none;"></span>
+                    <button id="generateHooksBtn" onclick="generateHooksFile()" style="padding: 2px 6px; background: #4caf50; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px; display: none;" title="Generate Hooks File">
+                        🔧 Generate Hooks
+                    </button>
                     <button onclick="selectAllCallGraphItems()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Select All">
                         ☑ All
                     </button>
@@ -1533,13 +1536,20 @@ function renderCallTree(container, nodes, level = 0) {
     });
 }
 
-// Update selection count display
+// Update selection count display and show/hide Generate Hooks button
 function updateCallGraphSelectionCount() {
     const countDisplay = document.getElementById('callGraphSelectionCount');
+    const generateBtn = document.getElementById('generateHooksBtn');
+    const count = selectedCallGraphItems.size;
+
     if (countDisplay) {
-        const count = selectedCallGraphItems.size;
         countDisplay.textContent = count > 0 ? `${count} selected` : '';
         countDisplay.style.display = count > 0 ? 'inline' : 'none';
+    }
+
+    // Show/hide Generate Hooks button based on selection
+    if (generateBtn) {
+        generateBtn.style.display = count > 0 ? 'inline-block' : 'none';
     }
 }
 
@@ -1569,6 +1579,97 @@ function selectAllCallGraphItems() {
         }
     });
     updateCallGraphSelectionCount();
+}
+
+// Generate hooks file from selected call graph functions
+function generateHooksFile() {
+    const selectedItems = getSelectedCallGraphItems();
+    if (selectedItems.length === 0) {
+        alert('Please select at least one function to generate hooks.');
+        return;
+    }
+
+    console.log('🔧 Generating hooks for', selectedItems.length, 'functions:', selectedItems.map(n => n.name));
+
+    // Get unique function names (avoid duplicates)
+    const functionNames = [...new Set(selectedItems.map(item => item.name))];
+
+    // Generate the hooks file content
+    const hooksContent = generateHooksCode(functionNames);
+
+    // Create a new tab with the generated content
+    const filename = 'generated_hooks.go';
+    if (window.codeEditor) {
+        window.codeEditor.createOrSwitchTab(filename, hooksContent);
+        console.log('✅ Generated hooks file opened in editor');
+    }
+}
+
+// Generate Go hooks code for the given function names
+function generateHooksCode(functionNames) {
+    // Convert function names to PascalCase for hook function names
+    const toPascalCase = (name) => {
+        return name.charAt(0).toUpperCase() + name.slice(1);
+    };
+
+    // Generate hook definitions for ProvideHooks()
+    const hookDefinitions = functionNames.map(funcName => {
+        const pascalName = toPascalCase(funcName);
+        return `		{
+			Target: hooks.InjectTarget{
+				Package:  "main",
+				Function: "${funcName}",
+				Receiver: "",
+			},
+			Hooks: &hooks.InjectFunctions{
+				Before: "Before${pascalName}",
+				After:  "After${pascalName}",
+				From:   "github.com/pdelewski/go-build-interceptor/generated_hook",
+			},
+		},`;
+    }).join('\n');
+
+    // Generate Before/After hook implementations
+    const hookImplementations = functionNames.map(funcName => {
+        const pascalName = toPascalCase(funcName);
+        return `// Before${pascalName} is called before ${funcName}() executes
+func Before${pascalName}(ctx *hooks.HookContext) error {
+	fmt.Printf("[%s] Starting ${funcName}()\\n", ctx.Function)
+	return nil
+}
+
+// After${pascalName} is called after ${funcName}() completes
+func After${pascalName}(ctx *hooks.HookContext) error {
+	fmt.Printf("[%s] Completed ${funcName}() in %v\\n", ctx.Function, ctx.Duration)
+	return nil
+}`;
+    }).join('\n\n');
+
+    // Build the complete hooks file
+    const code = `package generated_hook
+
+import (
+	"fmt"
+	"github.com/pdelewski/go-build-interceptor/hooks"
+)
+
+// GeneratedHookProvider implements the HookProvider interface
+type GeneratedHookProvider struct{}
+
+// ProvideHooks returns the hook definitions for the selected functions
+func (h *GeneratedHookProvider) ProvideHooks() []*hooks.Hook {
+	return []*hooks.Hook{
+${hookDefinitions}
+	}
+}
+
+${hookImplementations}
+
+// Ensure GeneratedHookProvider implements the HookProvider interface
+var _ hooks.HookProvider = (*GeneratedHookProvider)(nil)
+`;
+
+    return code;
 }
 
 // Try to navigate to a function by looking up the Functions view data
