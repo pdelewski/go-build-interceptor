@@ -152,29 +152,100 @@ class CodeEditor {
         }
     }
     
-    populateFileTree(files) {
-        this.fileTree.innerHTML = '';
-        
+    populateFileTree(files, container = null, basePath = '', level = 0) {
+        const targetContainer = container || this.fileTree;
+
+        // Only clear if this is the root level call
+        if (!container) {
+            targetContainer.innerHTML = '';
+        }
+
         files.forEach(file => {
             const fileItem = document.createElement('div');
             fileItem.className = 'file-item';
             fileItem.dataset.itemType = 'file';
-            fileItem.dataset.itemPath = file;
+            fileItem.dataset.itemPath = basePath + file;
+            fileItem.dataset.level = level;
             fileItem.tabIndex = 0; // Make focusable for keyboard navigation
-            
+            fileItem.style.paddingLeft = (8 + level * 16) + 'px';
+
             const icon = document.createElement('span');
             icon.className = 'file-icon';
-            
+
             if (file.endsWith('/')) {
+                const dirName = file.slice(0, -1);
                 fileItem.classList.add('directory');
                 fileItem.dataset.itemType = 'directory';
+                fileItem.dataset.expanded = 'false';
+
+                // Add expand/collapse arrow
+                const arrow = document.createElement('span');
+                arrow.className = 'dir-arrow';
+                arrow.textContent = '▶';
+                arrow.style.cssText = 'margin-right: 4px; font-size: 10px; display: inline-block; transition: transform 0.15s;';
+
                 icon.classList.add('folder');
-                fileItem.textContent = file.slice(0, -1);
+
+                // Create text node for directory name
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = dirName;
+
+                fileItem.appendChild(arrow);
+                fileItem.appendChild(icon);
+                fileItem.appendChild(nameSpan);
+
+                // Create children container (hidden initially)
+                const childrenContainer = document.createElement('div');
+                childrenContainer.className = 'dir-children';
+                childrenContainer.style.display = 'none';
+                childrenContainer.dataset.dirPath = basePath + file;
+
+                // Add click handler for expanding/collapsing
+                fileItem.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.selectExplorerItem(fileItem);
+
+                    const isExpanded = fileItem.dataset.expanded === 'true';
+
+                    if (isExpanded) {
+                        // Collapse
+                        fileItem.dataset.expanded = 'false';
+                        arrow.style.transform = 'rotate(0deg)';
+                        childrenContainer.style.display = 'none';
+                    } else {
+                        // Expand
+                        fileItem.dataset.expanded = 'true';
+                        arrow.style.transform = 'rotate(90deg)';
+                        childrenContainer.style.display = 'block';
+
+                        // Load children if not already loaded
+                        if (!childrenContainer.dataset.loaded) {
+                            childrenContainer.innerHTML = '<div style="padding: 4px 8px; color: #888; font-size: 11px;">Loading...</div>';
+                            await this.loadDirectoryContents(basePath + file, childrenContainer, level + 1);
+                            childrenContainer.dataset.loaded = 'true';
+                        }
+                    }
+                });
+
+                targetContainer.appendChild(fileItem);
+                targetContainer.appendChild(childrenContainer);
             } else {
                 const ext = file.split('.').pop()?.toLowerCase() || 'txt';
                 icon.classList.add(ext);
-                fileItem.textContent = file;
-                
+
+                // Create text node for file name
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = file;
+
+                // Add spacer for alignment with directories (where arrow would be)
+                const spacer = document.createElement('span');
+                spacer.style.cssText = 'margin-right: 4px; width: 10px; display: inline-block;';
+
+                fileItem.appendChild(spacer);
+                fileItem.appendChild(icon);
+                fileItem.appendChild(nameSpan);
+
                 // Add selection and open functionality
                 fileItem.addEventListener('click', (e) => {
                     e.preventDefault();
@@ -182,21 +253,34 @@ class CodeEditor {
                 });
                 fileItem.addEventListener('dblclick', (e) => {
                     e.preventDefault();
-                    this.openFile(file);
+                    this.openFile(basePath + file);
                 });
+
+                targetContainer.appendChild(fileItem);
             }
-            
-            // Add selection functionality for directories too
-            if (file.endsWith('/')) {
-                fileItem.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    this.selectExplorerItem(fileItem);
-                });
-            }
-            
-            fileItem.insertBefore(icon, fileItem.firstChild);
-            this.fileTree.appendChild(fileItem);
         });
+    }
+
+    async loadDirectoryContents(dirPath, container, level) {
+        try {
+            const response = await fetch(`/api/list?dir=${encodeURIComponent(dirPath)}`);
+            const result = await response.json();
+
+            if (result.success) {
+                container.innerHTML = '';
+                // Filter out parent directory link
+                const files = result.files.filter(f => f !== '../');
+
+                if (files.length === 0) {
+                    container.innerHTML = '<div style="padding: 4px 8px; padding-left: ' + (8 + level * 16) + 'px; color: #666; font-size: 11px; font-style: italic;">Empty directory</div>';
+                } else {
+                    this.populateFileTree(files, container, dirPath, level);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading directory contents:', error);
+            container.innerHTML = '<div style="padding: 4px 8px; color: #ff6b6b; font-size: 11px;">Error loading contents</div>';
+        }
     }
     
     async openFile(filename) {
