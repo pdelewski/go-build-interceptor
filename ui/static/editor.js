@@ -1597,11 +1597,33 @@ function generateHooksFile() {
     // Generate the hooks file content
     const hooksContent = generateHooksCode(functionNames);
 
-    // Create a new tab with the generated content
+    // Create or update tab with the generated content
     const filename = 'generated_hooks.go';
     if (window.codeEditor) {
-        window.codeEditor.createOrSwitchTab(filename, hooksContent);
-        console.log('✅ Generated hooks file opened in editor');
+        // Check if tab already exists - if so, update its content
+        if (window.codeEditor.openTabs.has(filename)) {
+            const tabData = window.codeEditor.openTabs.get(filename);
+            tabData.content = hooksContent;
+            tabData.originalContent = hooksContent; // Reset original so it's not marked as modified
+            tabData.modified = false;
+
+            // Switch to the tab and update editor
+            window.codeEditor.switchTab(filename);
+            window.codeEditor.editor.value = hooksContent;
+            window.codeEditor.updateSyntaxHighlighting();
+
+            // Update tab visual state (remove modified indicator)
+            const tab = document.querySelector(`[data-filename="${filename}"]`);
+            if (tab) {
+                tab.classList.remove('modified');
+            }
+
+            console.log('✅ Updated existing hooks file in editor');
+        } else {
+            // Create new tab
+            window.codeEditor.createOrSwitchTab(filename, hooksContent);
+            console.log('✅ Generated hooks file opened in editor');
+        }
     }
 }
 
