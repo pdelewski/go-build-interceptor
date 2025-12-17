@@ -18,6 +18,12 @@
   --vscode-error: #f14c4c;
   --vscode-warning: #ff8c00;
   --vscode-success: #73c991;
+  --vscode-terminal-bg: #1e1e1e;
+  --vscode-terminal-header-bg: #2d2d30;
+  --vscode-terminal-text: #d4d4d4;
+  --vscode-terminal-command: #569cd6;
+  --vscode-terminal-success: #4ec9b0;
+  --vscode-terminal-error: #f48771;
 }
 
 * {
@@ -1277,4 +1283,277 @@ body {
 
 .token.italic {
   font-style: italic;
+}
+
+/* Terminal Panel - only under code editor, not sidebar */
+.terminal-panel {
+  display: none;
+  position: fixed;
+  bottom: 22px;
+  left: 348px !important; /* activity bar (48px) + side panel (300px) */
+  right: 0;
+  height: 300px;
+  background: var(--vscode-terminal-bg);
+  border-top: 1px solid var(--vscode-border);
+  flex-direction: column;
+  z-index: 50;
+  min-height: 150px;
+  max-height: 80vh;
+}
+
+/* Terminal Resize Handle - positioned above terminal panel */
+.terminal-resize-handle {
+  position: absolute;
+  top: -6px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  background: transparent;
+  cursor: ns-resize;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Drag indicator bar - always visible */
+.terminal-resize-handle::before {
+  content: '';
+  width: 80px;
+  height: 5px;
+  background: #555;
+  border-radius: 3px;
+  transition: background-color 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.terminal-resize-handle:hover::before {
+  background: var(--vscode-accent);
+}
+
+.terminal-resize-handle:active::before {
+  background: #fff;
+}
+
+.terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: var(--vscode-terminal-header-bg);
+  border-bottom: 1px solid var(--vscode-border);
+  height: 35px;
+  min-height: 35px;
+  position: relative;
+  z-index: 1;
+}
+
+.terminal-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.terminal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.terminal-action {
+  background: transparent;
+  border: none;
+  color: var(--vscode-text-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s;
+}
+
+.terminal-action:hover {
+  background: var(--vscode-hover);
+  color: var(--vscode-text);
+}
+
+.terminal-action svg {
+  fill: currentColor;
+}
+
+.terminal-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-family: 'Cascadia Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--vscode-terminal-text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background: var(--vscode-terminal-bg);
+  box-sizing: border-box;
+}
+
+.terminal-output {
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.terminal-success {
+  color: var(--vscode-terminal-success);
+}
+
+.terminal-error {
+  color: var(--vscode-terminal-error);
+}
+
+.terminal-command {
+  color: var(--vscode-terminal-command);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+/* Adjust main content when terminal is open */
+body.terminal-open .ide-container {
+  bottom: 322px; /* 300px terminal + 22px status bar */
+}
+
+/* Terminal scrollbar styling */
+.terminal-content::-webkit-scrollbar {
+  width: 10px;
+}
+
+.terminal-content::-webkit-scrollbar-track {
+  background: var(--vscode-terminal-bg);
+}
+
+.terminal-content::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 5px;
+}
+
+.terminal-content::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
+
+/* Terminal resizing state */
+body.terminal-resizing {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
+
+body.terminal-resizing * {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
+
+body.terminal-resizing .terminal-resize-handle {
+  background: rgba(0, 122, 204, 0.3);
+}
+
+body.terminal-resizing .terminal-resize-handle::before {
+  background: var(--vscode-accent);
+}
+
+/* Terminal panel responsive design */
+@media (max-width: 768px) {
+  .terminal-panel {
+    height: 250px;
+  }
+
+  body.terminal-open .ide-container {
+    bottom: 272px; /* 250px terminal + 22px status bar */
+  }
+}
+
+/* Message Window */
+.message-window {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 1000px;
+  min-height: 400px;
+  max-height: 90vh;
+  background: var(--vscode-bg);
+  border: 1px solid var(--vscode-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.message-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--vscode-border);
+  border-radius: 8px 8px 0 0;
+}
+
+.message-header-info {
+  background: var(--vscode-accent);
+}
+
+.message-header-success {
+  background: #2ea043;
+}
+
+.message-header-error {
+  background: #f85149;
+}
+
+.message-header-warning {
+  background: #d29922;
+}
+
+.message-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+}
+
+.message-close {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+  opacity: 0.8;
+  transition: opacity 0.1s;
+}
+
+.message-close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.message-window-content {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  background: var(--vscode-editor-bg);
+  border-radius: 0 0 8px 8px;
+}
+
+.message-text {
+  margin: 0;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--vscode-text);
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }

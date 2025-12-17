@@ -61,6 +61,8 @@ func main() {
 	http.HandleFunc("/api/pack-packages", getPackPackages)
 	http.HandleFunc("/api/callgraph", getCallGraph)
 	http.HandleFunc("/api/workdir", getWorkDir)
+	http.HandleFunc("/api/compile", getCompile)
+	http.HandleFunc("/api/run-executable", getRunExecutable)
 
 	fmt.Printf("🚀 Web Text Editor Server Starting...\n")
 	fmt.Printf("📝 Access the editor at: http://localhost:%s\n", *port)
@@ -169,6 +171,9 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                     <div class="menu-option" onclick="toggleGitPanel()">
                         Toggle Git <span class="menu-shortcut">Ctrl+Shift+G</span>
                     </div>
+                    <div class="menu-option" onclick="toggleTerminal()">
+                        Toggle Terminal <span class="menu-shortcut">Ctrl+T</span>
+                    </div>
                     <div class="menu-separator"></div>
                     <div class="menu-option" onclick="showFunctions()">
                         Functions
@@ -276,6 +281,13 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
             <button class="toolbar-button" onclick="toggleTerminal()" title="Toggle Terminal">
                 <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M2 2v12h12V2H2zm11 11H3V3h10v10zM5.8 9L4 7.2l.6-.6L6 8l3.5-3.5.6.6L6.6 8.5l-.8.5z"/></svg>
             </button>
+            <div class="toolbar-separator"></div>
+            <button class="toolbar-button" onclick="runCompile()" title="Run Compile with Hooks">
+                <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M2 14L14 8 2 2v5l10 1L2 9v5z"/></svg>
+            </button>
+            <button class="toolbar-button" onclick="runExecutable()" title="Run Built Executable">
+                <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M4 2v12l10-6L4 2z"/></svg>
+            </button>
         </div>
     </div>
 
@@ -366,6 +378,26 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Terminal Panel -->
+    <div class="terminal-panel" id="terminalPanel" style="display: none;">
+        <!-- Terminal Resize Handle -->
+        <div class="terminal-resize-handle" id="terminalResizeHandle"></div>
+        <div class="terminal-header">
+            <span class="terminal-title">TERMINAL</span>
+            <div class="terminal-actions">
+                <button class="terminal-action" onclick="clearTerminal()" title="Clear Terminal">
+                    <svg width="14" height="14" viewBox="0 0 16 16"><path fill="currentColor" d="M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM3 8a5 5 0 1 1 10 0A5 5 0 0 1 3 8zm7.854-2.854a.5.5 0 0 1 0 .708L8.707 8l2.147 2.146a.5.5 0 0 1-.708.708L8 8.707l-2.146 2.147a.5.5 0 0 1-.708-.708L7.293 8 5.146 5.854a.5.5 0 1 1 .708-.708L8 7.293l2.146-2.147a.5.5 0 0 1 .708 0z"/></svg>
+                </button>
+                <button class="terminal-action" onclick="toggleTerminal()" title="Close Terminal">
+                    <svg width="14" height="14" viewBox="0 0 16 16"><path fill="currentColor" d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/></svg>
+                </button>
+            </div>
+        </div>
+        <div class="terminal-content" id="terminalContent">
+            <!-- Terminal output will be displayed here -->
         </div>
     </div>
 
@@ -775,6 +807,128 @@ func getWorkDir(w http.ResponseWriter, r *http.Request) {
 		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
 			err, execPath, rootDirectory, string(output))
 		sendErrorResponse(w, errorMsg)
+		return
+	}
+
+	// Return the command output
+	response := FileResponse{
+		Success: true,
+		Content: string(output),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func getCompile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		HooksFile string `json:"hooksFile"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendErrorResponse(w, "Invalid request format")
+		return
+	}
+
+	if req.HooksFile == "" {
+		sendErrorResponse(w, "Hooks file is required for compile command")
+		return
+	}
+
+	// Log the operation
+	fmt.Printf("🔧 Executing compile command with hooks file: %s...\n", req.HooksFile)
+
+	// Get absolute path to go-build-interceptor executable
+	execPath, err := filepath.Abs("../go-build-interceptor")
+	if err != nil {
+		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
+		return
+	}
+
+	// Check if executable exists
+	if _, err := os.Stat(execPath); os.IsNotExist(err) {
+		sendErrorResponse(w, fmt.Sprintf("Executable not found at: %s", execPath))
+		return
+	}
+
+	// Execute the external command with absolute path
+	fmt.Printf("📍 Executing: %s --compile %s from directory: %s\n", execPath, req.HooksFile, rootDirectory)
+	cmd := exec.Command(execPath, "--compile", req.HooksFile)
+	cmd.Dir = rootDirectory // Set working directory to the root directory
+
+	// Capture both stdout and stderr
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+			err, execPath, rootDirectory, string(output))
+		sendErrorResponse(w, errorMsg)
+		return
+	}
+
+	// Return the command output
+	response := FileResponse{
+		Success: true,
+		Content: string(output),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func getRunExecutable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ExecutablePath string `json:"executablePath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendErrorResponse(w, "Invalid request format")
+		return
+	}
+
+	if req.ExecutablePath == "" {
+		sendErrorResponse(w, "Executable path is required")
+		return
+	}
+
+	// Resolve the executable path relative to rootDirectory
+	execPath := req.ExecutablePath
+	if !filepath.IsAbs(execPath) {
+		execPath = filepath.Join(rootDirectory, execPath)
+	}
+
+	// Log the operation
+	fmt.Printf("🚀 Running executable: %s\n", execPath)
+
+	// Check if executable exists
+	if _, err := os.Stat(execPath); os.IsNotExist(err) {
+		sendErrorResponse(w, fmt.Sprintf("Executable not found at: %s", execPath))
+		return
+	}
+
+	// Execute the built program
+	fmt.Printf("📍 Executing: %s from directory: %s\n", execPath, rootDirectory)
+	cmd := exec.Command(execPath)
+	cmd.Dir = rootDirectory
+
+	// Capture both stdout and stderr
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Include output even on error (might have partial output)
+		errorMsg := fmt.Sprintf("Execution finished with error: %v\n\nOutput:\n%s", err, string(output))
+		response := FileResponse{
+			Success: true, // Still return success to show output
+			Content: errorMsg,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 

@@ -30,6 +30,7 @@ class CodeEditor {
         this.loadFileTree();
         this.updateUI();
         this.initializeResize();
+        this.initializeTerminalResize();
     }
     
     initializeEventListeners() {
@@ -804,18 +805,23 @@ class CodeEditor {
         
         const onMouseMove = (e) => {
             if (!isResizing) return;
-            
+
             const currentX = e.clientX;
             const diffX = currentX - startX;
             const newWidth = startWidth + diffX;
-            
+
             // Constrain to min/max width
             const minWidth = 200;
             const maxWidth = 600;
             const constrainedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
-            
+
             sidePanel.style.width = constrainedWidth + 'px';
-            
+
+            // Update terminal position if it's open
+            if (typeof updateTerminalPosition === 'function') {
+                updateTerminalPosition();
+            }
+
             e.preventDefault();
         };
         
@@ -829,6 +835,74 @@ class CodeEditor {
         // Double-click to reset to default width
         resizeHandle.addEventListener('dblclick', () => {
             sidePanel.style.width = '300px';
+        });
+    }
+    
+    initializeTerminalResize() {
+        const terminalResizeHandle = document.getElementById('terminalResizeHandle');
+        const terminalPanel = document.getElementById('terminalPanel');
+        
+        if (!terminalResizeHandle || !terminalPanel) return;
+        
+        let isResizing = false;
+        let startY = 0;
+        let startHeight = 0;
+        
+        terminalResizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startY = e.clientY;
+            startHeight = parseInt(document.defaultView.getComputedStyle(terminalPanel).height, 10);
+
+            document.body.classList.add('terminal-resizing');
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+
+            e.preventDefault();
+        });
+        
+        const onMouseMove = (e) => {
+            if (!isResizing) return;
+            
+            const currentY = e.clientY;
+            const diffY = startY - currentY; // Reversed because we're resizing from top
+            const newHeight = startHeight + diffY;
+            
+            // Constrain to min/max height
+            const minHeight = 150;
+            const maxHeight = Math.min(window.innerHeight * 0.8, 600);
+            const constrainedHeight = Math.max(minHeight, Math.min(maxHeight, newHeight));
+            
+            terminalPanel.style.height = constrainedHeight + 'px';
+            
+            // Update the layout adjustment
+            if (document.body.classList.contains('terminal-open')) {
+                const ideContainer = document.querySelector('.ide-container');
+                if (ideContainer) {
+                    ideContainer.style.bottom = (constrainedHeight + 22) + 'px'; // height + status bar
+                }
+            }
+            
+            e.preventDefault();
+        };
+        
+        const onMouseUp = () => {
+            isResizing = false;
+            document.body.classList.remove('terminal-resizing');
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        // Double-click to reset to default height
+        terminalResizeHandle.addEventListener('dblclick', () => {
+            terminalPanel.style.height = '300px';
+            
+            // Update the layout adjustment
+            if (document.body.classList.contains('terminal-open')) {
+                const ideContainer = document.querySelector('.ide-container');
+                if (ideContainer) {
+                    ideContainer.style.bottom = '322px'; // 300px + 22px status bar
+                }
+            }
         });
     }
 }
@@ -1163,10 +1237,10 @@ function showProject() {
     window.codeEditor?.loadFileTree();
 }
 
-function toggleTerminal() {
-    // Terminal functionality placeholder
-    console.log('Terminal toggle - feature not yet implemented');
-    alert('Terminal feature coming soon!');
+// Status update function
+function updateStatus(message) {
+    console.log('[STATUS] ' + message);
+    // Could enhance this to show in status bar
 }
 
 async function showStaticCallGraph() {
@@ -1648,6 +1722,7 @@ function reportIssue() {
     window.open('https://github.com/anthropics/claude-code/issues', '_blank');
 }
 
+
 // File dialog functions
 function openSelectedFile() {
     const selectedFileName = document.getElementById('selectedFileName');
@@ -1723,3 +1798,205 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('   Ctrl+W: Close tab');
     console.log('   Ctrl+F: Focus search');
 });
+
+// Terminal functionality
+function toggleTerminal() {
+    const terminal = document.getElementById('terminalPanel');
+    const isVisible = terminal.style.display === 'flex';
+    
+    if (isVisible) {
+        closeTerminal();
+    } else {
+        showTerminal();
+    }
+}
+
+function showTerminal() {
+    const terminal = document.getElementById('terminalPanel');
+    terminal.style.display = 'flex';
+    document.body.classList.add('terminal-open');
+
+    // Update layout based on current terminal height
+    const terminalHeight = parseInt(document.defaultView.getComputedStyle(terminal).height, 10);
+    const ideContainer = document.querySelector('.ide-container');
+    if (ideContainer) {
+        ideContainer.style.bottom = (terminalHeight + 22) + 'px'; // height + status bar
+    }
+
+    // Auto-scroll to bottom
+    const terminalContent = document.getElementById('terminalContent');
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+function updateTerminalPosition() {
+    const terminal = document.getElementById('terminalPanel');
+    const sidePanel = document.getElementById('sidePanel');
+    const activityBar = document.querySelector('.activity-bar');
+
+    if (terminal) {
+        // Get actual widths - use fallbacks if elements not found or have 0 width
+        let activityBarWidth = activityBar ? activityBar.getBoundingClientRect().width : 0;
+        if (activityBarWidth <= 0) activityBarWidth = 48; // Default activity bar width
+
+        let sidePanelWidth = sidePanel ? sidePanel.getBoundingClientRect().width : 0;
+        const sidePanelHidden = sidePanel && sidePanel.classList.contains('hidden');
+
+        // If side panel is not hidden but has 0 width, use default
+        if (!sidePanelHidden && sidePanelWidth <= 0) {
+            sidePanelWidth = 300; // Default side panel width
+        }
+
+        let leftPosition;
+        if (sidePanelHidden) {
+            leftPosition = activityBarWidth;
+        } else {
+            leftPosition = activityBarWidth + sidePanelWidth;
+        }
+
+        terminal.style.left = leftPosition + 'px';
+        console.log('Terminal position updated:', leftPosition, 'px (activity:', activityBarWidth, 'side:', sidePanelWidth, 'hidden:', sidePanelHidden, ')');
+    }
+}
+
+function closeTerminal() {
+    const terminal = document.getElementById('terminalPanel');
+    terminal.style.display = 'none';
+    document.body.classList.remove('terminal-open');
+    
+    // Reset layout
+    const ideContainer = document.querySelector('.ide-container');
+    if (ideContainer) {
+        ideContainer.style.bottom = '22px'; // Just status bar height
+    }
+}
+
+function clearTerminal() {
+    const terminalContent = document.getElementById('terminalContent');
+    terminalContent.innerHTML = '';
+}
+
+function addTerminalOutput(text, className = '') {
+    const terminalContent = document.getElementById('terminalContent');
+    const outputDiv = document.createElement('div');
+    outputDiv.className = 'terminal-output' + (className ? ' ' + className : '');
+    outputDiv.textContent = text;
+    terminalContent.appendChild(outputDiv);
+    
+    // Auto-scroll to bottom
+    terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Update the runCompile function to show output in message window
+async function runCompile() {
+    const hooksFile = prompt('Enter hooks file path (e.g., ../hello_hook/hello_hooks.go):');
+
+    if (!hooksFile || hooksFile.trim() === '') {
+        return;
+    }
+
+    // Show loading message
+    showMessageWindow('Compiling...', 'Running: go-build-interceptor --compile ' + hooksFile.trim(), 'info');
+
+    try {
+        const response = await fetch('/api/compile', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ hooksFile: hooksFile.trim() })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            showMessageWindow('Compile Failed', data.error, 'error');
+        } else {
+            const output = data.output || 'Compile completed successfully';
+            showMessageWindow('Compile Output', output, 'success');
+        }
+    } catch (err) {
+        console.error('Compile error:', err);
+        showMessageWindow('Compile Error', 'Failed to run compile: ' + err.message, 'error');
+    }
+}
+
+// Message window functions
+function showMessageWindow(title, message, type = 'info') {
+    // Remove existing message window if present
+    const existing = document.getElementById('messageWindow');
+    if (existing) {
+        existing.remove();
+    }
+
+    // Create message window
+    const messageWindow = document.createElement('div');
+    messageWindow.id = 'messageWindow';
+    messageWindow.className = 'message-window';
+
+    // Determine icon and color based on type
+    let icon = 'ℹ️';
+    let headerClass = 'message-header-info';
+    if (type === 'error') {
+        icon = '❌';
+        headerClass = 'message-header-error';
+    } else if (type === 'success') {
+        icon = '✅';
+        headerClass = 'message-header-success';
+    } else if (type === 'warning') {
+        icon = '⚠️';
+        headerClass = 'message-header-warning';
+    }
+
+    messageWindow.innerHTML = `
+        <div class="message-window-header ${headerClass}">
+            <span class="message-title">${icon} ${title}</span>
+            <button class="message-close" onclick="closeMessageWindow()">×</button>
+        </div>
+        <div class="message-window-content">
+            <pre class="message-text">${escapeHtml(message)}</pre>
+        </div>
+    `;
+
+    document.body.appendChild(messageWindow);
+}
+
+function closeMessageWindow() {
+    const messageWindow = document.getElementById('messageWindow');
+    if (messageWindow) {
+        messageWindow.remove();
+    }
+}
+
+// Run the built executable
+async function runExecutable() {
+    const execPath = prompt('Enter executable path (e.g., ./hello or hello):');
+
+    if (!execPath || execPath.trim() === '') {
+        return;
+    }
+
+    // Show loading message
+    showMessageWindow('Running...', 'Executing: ' + execPath.trim(), 'info');
+
+    try {
+        const response = await fetch('/api/run-executable', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ executablePath: execPath.trim() })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            showMessageWindow('Execution Failed', data.error, 'error');
+        } else {
+            const output = data.content || 'No output';
+            showMessageWindow('Execution Output', output, 'success');
+        }
+    } catch (err) {
+        console.error('Execution error:', err);
+        showMessageWindow('Execution Error', 'Failed to run executable: ' + err.message, 'error');
+    }
+}
