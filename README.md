@@ -368,7 +368,6 @@ During operation, the tool creates several files:
 
 - Currently supports before/after style hooks; more complex interception patterns require function rewriting
 - Static call graph analysis may not capture all dynamic dispatch scenarios
-- The instrumentation modifies copies of source files in the WORK directory
 - Some edge cases in Go's build system may not be fully captured
 
 ## Contributing
