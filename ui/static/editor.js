@@ -1580,18 +1580,152 @@ async function showWorkDirectory() {
         const content = document.createElement('div');
         content.className = 'work-dir-content';
         content.style.cssText = `
-            padding: 10px;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            line-height: 1.4;
-            white-space: pre-wrap;
+            padding: 4px 0;
             overflow-y: auto;
             max-height: calc(100vh - 150px);
         `;
-        
-        // Format the work directory output
-        content.textContent = workDirData;
-        
+
+        // Parse work directory output and create clickable file items
+        // Format is hierarchical with indentation:
+        // 📁 b001/
+        //   📄 file.go (123 bytes)
+        //   📁 src/
+        //     📄 main.go (456 bytes)
+        const lines = workDirData.split('\n');
+        let workBasePath = '';
+        let dirStack = []; // Stack to track nested directories based on indentation
+
+        lines.forEach(line => {
+            if (!line.trim()) return;
+
+            // Check for WORK= anywhere in the line (e.g., "First command: WORK=/path...")
+            if (line.includes('WORK=')) {
+                const workMatch = line.match(/WORK=([^\s]+)/);
+                if (workMatch) {
+                    workBasePath = workMatch[1].trim();
+                    console.log('📁 Extracted WORK path:', workBasePath);
+                }
+
+                // Show the WORK path as a header
+                const workHeader = document.createElement('div');
+                workHeader.style.cssText = `
+                    padding: 8px 16px;
+                    font-family: 'Consolas', 'Courier New', monospace;
+                    font-size: 12px;
+                    color: var(--vscode-text-muted);
+                    background: var(--vscode-sidebar-bg);
+                    border-bottom: 1px solid var(--vscode-border);
+                `;
+                workHeader.innerHTML = `<span style="color: #4fc3f7;">WORK=</span>${workBasePath}`;
+                content.appendChild(workHeader);
+                return;
+            }
+
+            // Skip header lines
+            if (line.includes('Contents of work directory') || line.includes('===') ||
+                line.includes('Parsed ') || line.includes('Work Directory Mode') ||
+                line.includes('Found WORK directory')) {
+                return;
+            }
+
+            // Calculate indentation level (number of leading spaces / 2)
+            const leadingSpaces = line.match(/^(\s*)/)[1].length;
+            const indentLevel = Math.floor(leadingSpaces / 2);
+            const trimmedLine = line.trim();
+
+            // Check if it's a directory line (has 📁 and ends with /)
+            const dirMatch = trimmedLine.match(/^📁\s*(.+)\/$/);
+            if (dirMatch) {
+                const dirName = dirMatch[1];
+
+                // Adjust directory stack to current level
+                while (dirStack.length > indentLevel) {
+                    dirStack.pop();
+                }
+                dirStack.push(dirName);
+
+                // Show directory as a section header
+                const dirHeader = document.createElement('div');
+                const paddingLeft = 16 + (indentLevel * 16);
+                dirHeader.style.cssText = `
+                    padding: 6px 16px 6px ${paddingLeft}px;
+                    font-family: 'Consolas', 'Courier New', monospace;
+                    font-size: 12px;
+                    color: #dcdcaa;
+                    background: rgba(255, 255, 255, 0.03);
+                    margin-top: 2px;
+                `;
+                dirHeader.innerHTML = `📁 ${dirName}/`;
+                content.appendChild(dirHeader);
+                return;
+            }
+
+            // Check if it's a file line (has 📄 and size in bytes)
+            const fileMatch = trimmedLine.match(/^📄\s*(.+?)\s*\((\d+)\s*bytes?\)$/);
+            if (fileMatch) {
+                const fileName = fileMatch[1];
+                const fileSize = fileMatch[2];
+
+                // Adjust directory stack to current level
+                while (dirStack.length > indentLevel) {
+                    dirStack.pop();
+                }
+
+                // Build full path from work base + directory stack + filename
+                let fullPath = workBasePath;
+                if (dirStack.length > 0) {
+                    fullPath += '/' + dirStack.join('/');
+                }
+                fullPath += '/' + fileName;
+
+                const fileItem = document.createElement('div');
+                fileItem.className = 'explorer-item file-item';
+                const paddingLeft = 32 + (indentLevel * 16);
+                fileItem.style.cssText = `
+                    padding: 4px 16px 4px ${paddingLeft}px;
+                    cursor: pointer;
+                    font-family: 'Consolas', 'Courier New', monospace;
+                    font-size: 13px;
+                `;
+
+                // Get file extension for icon
+                const ext = fileName.split('.').pop().toLowerCase();
+                let icon = '📄';
+                if (ext === 'go') icon = '🐹';
+                else if (ext === 'js') icon = '📜';
+                else if (ext === 'json') icon = '📋';
+                else if (ext === 'md') icon = '📝';
+                else if (ext === 'css') icon = '🎨';
+                else if (ext === 'html') icon = '🌐';
+                else if (ext === 'a') icon = '📦';
+                else if (ext === 'o') icon = '⚙️';
+                else if (ext === 'h') icon = '📋';
+
+                fileItem.innerHTML = `<span style="margin-right: 8px;">${icon}</span>${fileName} <span style="color: #666; font-size: 11px;">(${fileSize} bytes)</span>`;
+                fileItem.title = fullPath; // Show full path on hover
+
+                console.log(`📄 File: ${fileName}, Full path: ${fullPath}`);
+
+                // Add click handler to open file
+                fileItem.addEventListener('click', () => {
+                    if (window.codeEditor) {
+                        console.log('📂 Opening file:', fullPath);
+                        window.codeEditor.openFile(fullPath);
+                    }
+                });
+
+                // Add hover effect
+                fileItem.addEventListener('mouseenter', () => {
+                    fileItem.style.background = 'var(--vscode-hover)';
+                });
+                fileItem.addEventListener('mouseleave', () => {
+                    fileItem.style.background = '';
+                });
+
+                content.appendChild(fileItem);
+            }
+        });
+
         fileTree.appendChild(content);
         
     } catch (error) {

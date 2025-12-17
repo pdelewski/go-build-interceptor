@@ -479,15 +479,23 @@ func openFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the full path within the root directory
-	fullPath, err := getFullPath(req.Filename)
-	if err != nil {
-		sendErrorResponse(w, "Invalid filename - path outside root directory")
-		return
-	}
+	var fullPath string
+	var err error
 
-	// Log the file operation
-	fmt.Printf("📂 Opening file: %s (full path: %s)\n", req.Filename, fullPath)
+	// Check if this is an absolute path (e.g., from work directory)
+	if filepath.IsAbs(req.Filename) {
+		// For absolute paths, use them directly (allows opening temp files from workdir)
+		fullPath = filepath.Clean(req.Filename)
+		fmt.Printf("📂 Opening absolute path: %s\n", fullPath)
+	} else {
+		// Get the full path within the root directory
+		fullPath, err = getFullPath(req.Filename)
+		if err != nil {
+			sendErrorResponse(w, "Invalid filename - path outside root directory")
+			return
+		}
+		fmt.Printf("📂 Opening file: %s (full path: %s)\n", req.Filename, fullPath)
+	}
 
 	content, err := ioutil.ReadFile(fullPath)
 	if err != nil {
