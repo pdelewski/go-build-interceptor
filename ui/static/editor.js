@@ -1264,16 +1264,30 @@ async function showStaticCallGraph() {
         const fileTree = document.getElementById('fileTree');
         fileTree.innerHTML = '';
         
-        // Add header
+        // Add header with selection controls
         const header = document.createElement('div');
         header.className = 'view-header';
         header.innerHTML = `
-            📊 Static Call Graph
-            <button onclick="loadFilesIntoExplorer()" style="margin-left: 10px; padding: 3px 8px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">
-                ← Back to Files
-            </button>
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <span>📊 Static Call Graph</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span id="callGraphSelectionCount" style="color: #4fc3f7; font-size: 11px; display: none;"></span>
+                    <button onclick="selectAllCallGraphItems()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Select All">
+                        ☑ All
+                    </button>
+                    <button onclick="clearCallGraphSelection()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Clear Selection">
+                        ☐ Clear
+                    </button>
+                    <button onclick="loadFilesIntoExplorer()" style="padding: 2px 6px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">
+                        ← Back
+                    </button>
+                </div>
+            </div>
         `;
         fileTree.appendChild(header);
+
+        // Clear previous selections when showing new call graph
+        selectedCallGraphItems.clear();
         
         // If parsing failed, show raw data as fallback
         if (callTree.length === 0) {
@@ -1358,8 +1372,8 @@ function parseCallGraph(callGraphText) {
     return tree;
 }
 
-// Track selected call graph item
-let selectedCallGraphItem = null;
+// Track selected call graph items (multi-select)
+let selectedCallGraphItems = new Set();
 
 function renderCallTree(container, nodes, level = 0) {
     nodes.forEach(node => {
@@ -1378,6 +1392,32 @@ function renderCallTree(container, nodes, level = 0) {
             margin: 1px 0;
             transition: background-color 0.15s;
         `;
+
+        // Add checkbox for multi-selection
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'call-graph-checkbox';
+        checkbox.style.cssText = `
+            margin-right: 8px;
+            cursor: pointer;
+            width: 14px;
+            height: 14px;
+            accent-color: #007acc;
+        `;
+        // Store node reference on checkbox for Select All functionality
+        checkbox.nodeRef = node;
+        checkbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (checkbox.checked) {
+                selectedCallGraphItems.add(node);
+                nodeContent.style.backgroundColor = 'rgba(0, 122, 204, 0.2)';
+            } else {
+                selectedCallGraphItems.delete(node);
+                nodeContent.style.backgroundColor = '';
+            }
+            updateCallGraphSelectionCount();
+            console.log('📊 Selected items:', selectedCallGraphItems.size);
+        });
 
         // Add expand/collapse arrow if has children
         const arrow = document.createElement('span');
@@ -1429,6 +1469,7 @@ function renderCallTree(container, nodes, level = 0) {
             `;
         }
 
+        nodeContent.appendChild(checkbox);
         nodeContent.appendChild(arrow);
         nodeContent.appendChild(icon);
         nodeContent.appendChild(nameSpan);
@@ -1438,33 +1479,22 @@ function renderCallTree(container, nodes, level = 0) {
 
         // Add hover effects
         nodeContent.addEventListener('mouseenter', () => {
-            if (nodeContent !== selectedCallGraphItem) {
+            if (!checkbox.checked) {
                 nodeContent.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
             }
         });
         nodeContent.addEventListener('mouseleave', () => {
-            if (nodeContent !== selectedCallGraphItem) {
+            if (!checkbox.checked) {
                 nodeContent.style.backgroundColor = '';
             }
         });
 
-        // Add click handler for selection and expand/collapse
+        // Add click handler for navigation and expand/collapse (not for selection - use checkbox)
         nodeContent.addEventListener('click', (e) => {
+            // Don't handle if clicking on checkbox
+            if (e.target === checkbox) return;
+
             e.stopPropagation();
-
-            // Clear previous selection
-            if (selectedCallGraphItem && selectedCallGraphItem !== nodeContent) {
-                selectedCallGraphItem.style.backgroundColor = '';
-                selectedCallGraphItem.style.outline = '';
-            }
-
-            // Select this item
-            selectedCallGraphItem = nodeContent;
-            nodeContent.style.backgroundColor = 'rgba(0, 122, 204, 0.3)';
-            nodeContent.style.outline = '1px solid rgba(0, 122, 204, 0.5)';
-
-            // Log selection
-            console.log('📊 Selected call graph item:', node.name, node.lines ? `at line(s) ${node.lines}` : '');
 
             // Try to navigate to the function if we can find it
             if (node.lines && !node.isRoot) {
@@ -1501,6 +1531,44 @@ function renderCallTree(container, nodes, level = 0) {
 
         container.appendChild(nodeItem);
     });
+}
+
+// Update selection count display
+function updateCallGraphSelectionCount() {
+    const countDisplay = document.getElementById('callGraphSelectionCount');
+    if (countDisplay) {
+        const count = selectedCallGraphItems.size;
+        countDisplay.textContent = count > 0 ? `${count} selected` : '';
+        countDisplay.style.display = count > 0 ? 'inline' : 'none';
+    }
+}
+
+// Get selected call graph items
+function getSelectedCallGraphItems() {
+    return Array.from(selectedCallGraphItems);
+}
+
+// Clear all selections
+function clearCallGraphSelection() {
+    selectedCallGraphItems.clear();
+    document.querySelectorAll('.call-graph-checkbox').forEach(cb => {
+        cb.checked = false;
+        cb.closest('.call-graph-content').style.backgroundColor = '';
+    });
+    updateCallGraphSelectionCount();
+}
+
+// Select all visible items
+function selectAllCallGraphItems() {
+    document.querySelectorAll('.call-graph-checkbox').forEach(cb => {
+        cb.checked = true;
+        cb.closest('.call-graph-content').style.backgroundColor = 'rgba(0, 122, 204, 0.2)';
+        // Add node to selection set using stored reference
+        if (cb.nodeRef) {
+            selectedCallGraphItems.add(cb.nodeRef);
+        }
+    });
+    updateCallGraphSelectionCount();
 }
 
 // Try to navigate to a function by looking up the Functions view data
