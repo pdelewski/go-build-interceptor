@@ -1911,7 +1911,8 @@ async function runCompile() {
         if (data.error) {
             showMessageWindow('Compile Failed', data.error, 'error');
         } else {
-            const output = data.output || 'Compile completed successfully';
+            // Use data.content (from backend) - show full output
+            const output = data.content || 'Compile completed successfully (no output)';
             showMessageWindow('Compile Output', output, 'success');
         }
     } catch (err) {
@@ -1920,7 +1921,7 @@ async function runCompile() {
     }
 }
 
-// Message window functions
+// Message window functions - simple compact window with scrollbar
 function showMessageWindow(title, message, type = 'info') {
     // Remove existing message window if present
     const existing = document.getElementById('messageWindow');

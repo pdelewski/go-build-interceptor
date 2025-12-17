@@ -1471,16 +1471,14 @@ body.terminal-resizing .terminal-resize-handle::before {
   }
 }
 
-/* Message Window */
+/* Message Window - full width with scrollbar */
 .message-window {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 90%;
-  max-width: 1000px;
-  min-height: 400px;
-  max-height: 90vh;
+  bottom: 30px;
+  left: 20px;
+  right: 20px;
+  width: auto;
+  height: 280px;
   background: var(--vscode-bg);
   border: 1px solid var(--vscode-border);
   border-radius: 8px;
@@ -1489,6 +1487,7 @@ body.terminal-resizing .terminal-resize-handle::before {
   display: flex;
   flex-direction: column;
   animation: fadeIn 0.2s ease-out;
+  overflow: hidden;
 }
 
 .message-window-header {
@@ -1556,4 +1555,49 @@ body.terminal-resizing .terminal-resize-handle::before {
   color: var(--vscode-text);
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+/* Message window resize handles */
+.message-resize-handle {
+  position: absolute;
+  background: transparent;
+  z-index: 10;
+}
+
+.message-resize-right {
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.message-resize-right:hover {
+  background: var(--vscode-accent);
+}
+
+.message-resize-bottom {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.message-resize-bottom:hover {
+  background: var(--vscode-accent);
+}
+
+.message-resize-corner {
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, #666 50%);
+  border-radius: 0 0 8px 0;
+}
+
+.message-resize-corner:hover {
+  background: linear-gradient(135deg, transparent 50%, var(--vscode-accent) 50%);
 }
