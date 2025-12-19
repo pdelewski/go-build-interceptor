@@ -1623,12 +1623,29 @@ async function showFunctions() {
                 const header = document.createElement('div');
                 header.className = 'view-header';
                 header.innerHTML = `
-                    ⚙️ FUNCTIONS
-                    <button onclick="loadFilesIntoExplorer()" style="margin-left: 10px; padding: 3px 8px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">
-                        ← Back to Files
-                    </button>
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                        <span>⚙️ FUNCTIONS</span>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <span id="functionSelectionCount" style="color: #4fc3f7; font-size: 11px; display: none;"></span>
+                            <button id="generateFunctionHooksBtn" onclick="generateHooksFromFunctions()" style="padding: 2px 6px; background: #4caf50; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px; display: none;" title="Generate Hooks File">
+                                🔧 Generate Hooks
+                            </button>
+                            <button onclick="selectAllFunctionItems()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Select All">
+                                ☑ All
+                            </button>
+                            <button onclick="clearFunctionSelection()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Clear Selection">
+                                ☐ Clear
+                            </button>
+                            <button onclick="loadFilesIntoExplorer()" style="padding: 2px 6px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">
+                                ← Back
+                            </button>
+                        </div>
+                    </div>
                 `;
                 fileTree.appendChild(header);
+
+                // Clear any previous function selections
+                selectedFunctionItems.clear();
                 
                 // Group functions by file or show all
                 lines.forEach(line => {
@@ -1642,37 +1659,53 @@ async function showFunctions() {
                     }
                     
                     if (trimmedLine) {
+                        // Parse function name from the line (format: "funcName" or "package.funcName")
+                        const funcName = trimmedLine.split('(')[0].trim();
+                        const funcData = { name: funcName, fullSignature: trimmedLine };
+
                         // Try to parse function information
                         const functionItem = document.createElement('div');
                         functionItem.className = 'explorer-item function-item';
                         functionItem.tabIndex = 0; // Make focusable for keyboard navigation
-                        
+
                         // Add checkbox for selection
                         const checkbox = document.createElement('input');
                         checkbox.type = 'checkbox';
-                        checkbox.className = 'explorer-checkbox';
+                        checkbox.className = 'function-checkbox';
+                        checkbox.funcRef = funcData; // Store reference to function data
                         checkbox.addEventListener('click', (e) => {
                             e.stopPropagation(); // Prevent item selection when clicking checkbox
                         });
-                        
+                        checkbox.addEventListener('change', (e) => {
+                            if (e.target.checked) {
+                                selectedFunctionItems.add(funcData);
+                                functionItem.style.backgroundColor = 'rgba(0, 122, 204, 0.2)';
+                            } else {
+                                selectedFunctionItems.delete(funcData);
+                                functionItem.style.backgroundColor = '';
+                            }
+                            updateFunctionSelectionCount();
+                            console.log('⚙️ Selected functions:', selectedFunctionItems.size);
+                        });
+
                         // Add item content wrapper
                         const itemContent = document.createElement('div');
                         itemContent.className = 'explorer-item-content';
-                        
+
                         // Add selection event listeners
                         functionItem.addEventListener('click', (e) => {
                             e.preventDefault();
                             window.codeEditor?.selectExplorerItem(functionItem);
                         });
-                        
+
                         // Set text content and title
                         itemContent.textContent = trimmedLine;
                         functionItem.title = trimmedLine;
-                        
+
                         // Append checkbox and content to the function item
                         functionItem.appendChild(checkbox);
                         functionItem.appendChild(itemContent);
-                        
+
                         fileTree.appendChild(functionItem);
                     }
                 });
@@ -1968,6 +2001,9 @@ function parseCallGraph(callGraphText) {
 // Track selected call graph items (multi-select)
 let selectedCallGraphItems = new Set();
 
+// Track selected function items (multi-select for Functions view)
+let selectedFunctionItems = new Set();
+
 function renderCallTree(container, nodes, level = 0) {
     nodes.forEach(node => {
         const nodeItem = document.createElement('div');
@@ -2169,6 +2205,145 @@ function selectAllCallGraphItems() {
         }
     });
     updateCallGraphSelectionCount();
+}
+
+// ============================================
+// Functions View Selection Helper Functions
+// ============================================
+
+// Update the function selection count display
+function updateFunctionSelectionCount() {
+    const countDisplay = document.getElementById('functionSelectionCount');
+    const generateBtn = document.getElementById('generateFunctionHooksBtn');
+    const count = selectedFunctionItems.size;
+
+    if (countDisplay) {
+        countDisplay.textContent = count > 0 ? `${count} selected` : '';
+        countDisplay.style.display = count > 0 ? 'inline' : 'none';
+    }
+
+    // Show/hide Generate Hooks button based on selection
+    if (generateBtn) {
+        generateBtn.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+}
+
+// Get selected function items
+function getSelectedFunctionItems() {
+    return Array.from(selectedFunctionItems);
+}
+
+// Clear all function selections
+function clearFunctionSelection() {
+    selectedFunctionItems.clear();
+    document.querySelectorAll('.function-checkbox').forEach(cb => {
+        cb.checked = false;
+        cb.closest('.function-item').style.backgroundColor = '';
+    });
+    updateFunctionSelectionCount();
+}
+
+// Select all visible function items
+function selectAllFunctionItems() {
+    document.querySelectorAll('.function-checkbox').forEach(cb => {
+        cb.checked = true;
+        cb.closest('.function-item').style.backgroundColor = 'rgba(0, 122, 204, 0.2)';
+        // Add function to selection set using stored reference
+        if (cb.funcRef) {
+            selectedFunctionItems.add(cb.funcRef);
+        }
+    });
+    updateFunctionSelectionCount();
+}
+
+// Generate hooks file from selected functions (Functions view)
+async function generateHooksFromFunctions() {
+    const selectedItems = getSelectedFunctionItems();
+    if (selectedItems.length === 0) {
+        alert('Please select at least one function to generate hooks.');
+        return;
+    }
+
+    console.log('🔧 Generating hooks for', selectedItems.length, 'functions:', selectedItems.map(f => f.name));
+
+    // Get unique function names (avoid duplicates)
+    const functionNames = [...new Set(selectedItems.map(item => item.name))];
+
+    // Generate the hooks file content
+    const hooksContent = generateHooksCode(functionNames);
+
+    // Directory name for the hooks module
+    const dirName = 'generated_hooks';
+
+    try {
+        // Call backend API to create the hooks module
+        const response = await fetch('/api/create-hooks-module', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                dirName: dirName,
+                fileContent: hooksContent
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            console.log('✅ Created hooks module:', result.directory);
+            console.log('📝 Hooks file:', result.hooksFile);
+            console.log('📦 Module name:', result.moduleName);
+
+            // Open the generated file in the editor (but don't switch side panel)
+            if (window.codeEditor) {
+                const filename = result.hooksFile;
+                const content = hooksContent;
+
+                // Check if tab already exists
+                if (window.codeEditor.openTabs.has(filename)) {
+                    // Close the existing tab first, then reopen with new content
+                    const model = window.codeEditor.monacoModels.get(filename);
+                    if (model) {
+                        model.dispose();
+                        window.codeEditor.monacoModels.delete(filename);
+                    }
+                    window.codeEditor.openTabs.delete(filename);
+
+                    // Remove the tab element
+                    const tabElement = document.querySelector(`[data-filename="${filename}"]`);
+                    if (tabElement) {
+                        tabElement.remove();
+                    }
+                }
+
+                // Create new tab with the generated content
+                window.codeEditor.createOrSwitchTab(filename, content);
+                console.log('✅ Opened/updated generated hooks file in editor');
+            }
+
+            // Show success message (non-blocking notification style)
+            const notification = document.createElement('div');
+            notification.className = 'hooks-notification';
+            notification.innerHTML = `
+                <div style="background: #4caf50; color: white; padding: 10px 15px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+                    <strong>✅ Hooks module created!</strong><br>
+                    <small>${result.hooksFile}</small>
+                </div>
+            `;
+            notification.style.cssText = 'position: fixed; top: 60px; right: 20px; z-index: 10000;';
+            document.body.appendChild(notification);
+
+            // Auto-remove notification after 4 seconds
+            setTimeout(() => {
+                notification.remove();
+            }, 4000);
+        } else {
+            console.error('❌ Failed to create hooks module:', result.error);
+            alert('Failed to create hooks module: ' + result.error);
+        }
+    } catch (error) {
+        console.error('❌ Error creating hooks module:', error);
+        alert('Error creating hooks module: ' + error.message);
+    }
 }
 
 // Generate hooks file from selected call graph functions
