@@ -2172,7 +2172,7 @@ function selectAllCallGraphItems() {
 }
 
 // Generate hooks file from selected call graph functions
-function generateHooksFile() {
+async function generateHooksFile() {
     const selectedItems = getSelectedCallGraphItems();
     if (selectedItems.length === 0) {
         alert('Please select at least one function to generate hooks.');
@@ -2187,42 +2187,68 @@ function generateHooksFile() {
     // Generate the hooks file content
     const hooksContent = generateHooksCode(functionNames);
 
-    // Create or update tab with the generated content
-    const filename = 'generated_hooks.go';
-    if (window.codeEditor) {
-        // Check if tab already exists - if so, update its content
-        if (window.codeEditor.openTabs.has(filename)) {
-            const tabData = window.codeEditor.openTabs.get(filename);
-            tabData.content = hooksContent;
-            tabData.originalContent = hooksContent; // Reset original so it's not marked as modified
-            tabData.modified = false;
+    // Directory name for the hooks module
+    const dirName = 'generated_hooks';
 
-            // Switch to the tab and update editor
-            window.codeEditor.switchTab(filename);
-            window.codeEditor.editor.value = hooksContent;
-            window.codeEditor.updateSyntaxHighlighting();
+    try {
+        // Call backend API to create the hooks module
+        const response = await fetch('/api/create-hooks-module', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                dirName: dirName,
+                fileContent: hooksContent
+            })
+        });
 
-            // Update tab visual state (remove modified indicator)
-            const tab = document.querySelector(`[data-filename="${filename}"]`);
-            if (tab) {
-                tab.classList.remove('modified');
+        const result = await response.json();
+
+        if (result.success) {
+            console.log('✅ Created hooks module:', result.directory);
+            console.log('📝 Hooks file:', result.hooksFile);
+            console.log('📦 Module name:', result.moduleName);
+
+            // Refresh the file explorer to show the new directory (but stay on call graph)
+            if (window.codeEditor) {
+                window.codeEditor.loadFileTree();
             }
 
-            console.log('✅ Updated existing hooks file in editor');
+            // Show success message (non-blocking notification style)
+            const notification = document.createElement('div');
+            notification.className = 'hooks-notification';
+            notification.innerHTML = `
+                <div style="background: #4caf50; color: white; padding: 10px 15px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+                    <strong>✅ Hooks module created!</strong><br>
+                    <small>${result.hooksFile}</small>
+                </div>
+            `;
+            notification.style.cssText = 'position: fixed; top: 60px; right: 20px; z-index: 10000;';
+            document.body.appendChild(notification);
+
+            // Auto-remove notification after 4 seconds
+            setTimeout(() => {
+                notification.remove();
+            }, 4000);
         } else {
-            // Create new tab
-            window.codeEditor.createOrSwitchTab(filename, hooksContent);
-            console.log('✅ Generated hooks file opened in editor');
+            console.error('❌ Failed to create hooks module:', result.error);
+            alert('Failed to create hooks module: ' + result.error);
         }
+    } catch (error) {
+        console.error('❌ Error creating hooks module:', error);
+        alert('Error creating hooks module: ' + error.message);
     }
 }
 
 // Generate Go hooks code for the given function names
-function generateHooksCode(functionNames) {
+function generateHooksCode(functionNames, moduleName = '') {
     // Convert function names to PascalCase for hook function names
     const toPascalCase = (name) => {
         return name.charAt(0).toUpperCase() + name.slice(1);
     };
+
+    // Use a placeholder that will be replaced based on the actual module
+    // The backend will determine the correct module path
+    const hooksModulePath = moduleName || 'generated_hooks';
 
     // Generate hook definitions for ProvideHooks()
     const hookDefinitions = functionNames.map(funcName => {
@@ -2236,7 +2262,7 @@ function generateHooksCode(functionNames) {
 			Hooks: &hooks.InjectFunctions{
 				Before: "Before${pascalName}",
 				After:  "After${pascalName}",
-				From:   "github.com/pdelewski/go-build-interceptor/generated_hook",
+				From:   "${hooksModulePath}",
 			},
 		},`;
     }).join('\n');

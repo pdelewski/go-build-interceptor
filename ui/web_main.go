@@ -228,6 +228,7 @@ func main() {
 	http.HandleFunc("/api/workdir", getWorkDir)
 	http.HandleFunc("/api/compile", getCompile)
 	http.HandleFunc("/api/run-executable", getRunExecutable)
+	http.HandleFunc("/api/create-hooks-module", createHooksModule)
 
 	// LSP WebSocket endpoint
 	http.HandleFunc("/ws/lsp", handleLSPWebSocket)
@@ -719,6 +720,104 @@ func saveFile(w http.ResponseWriter, r *http.Request) {
 	response := FileResponse{Success: true}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// createHooksModule creates a new hooks module directory with go.mod and hooks file
+func createHooksModule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		DirName     string `json:"dirName"`
+		ModuleName  string `json:"moduleName"`
+		FileContent string `json:"fileContent"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendErrorResponse(w, "Invalid request format")
+		return
+	}
+
+	// Default directory name
+	if req.DirName == "" {
+		req.DirName = "generated_hooks"
+	}
+
+	// Get the full path within the root directory
+	fullPath, err := getFullPath(req.DirName)
+	if err != nil {
+		sendErrorResponse(w, "Invalid directory name - path outside root directory")
+		return
+	}
+
+	fmt.Printf("📁 Creating hooks module: %s\n", fullPath)
+
+	// Create the directory
+	if err := os.MkdirAll(fullPath, 0755); err != nil {
+		sendErrorResponse(w, fmt.Sprintf("Failed to create directory: %v", err))
+		return
+	}
+
+	// Write the hooks file
+	hooksFilePath := filepath.Join(fullPath, "generated_hooks.go")
+	if err := ioutil.WriteFile(hooksFilePath, []byte(req.FileContent), 0644); err != nil {
+		sendErrorResponse(w, fmt.Sprintf("Failed to write hooks file: %v", err))
+		return
+	}
+	fmt.Printf("📝 Created hooks file: %s\n", hooksFilePath)
+
+	// Determine module name
+	moduleName := req.ModuleName
+	if moduleName == "" {
+		// Try to detect parent module name from go.mod
+		parentGoMod := filepath.Join(rootDirectory, "go.mod")
+		if data, err := ioutil.ReadFile(parentGoMod); err == nil {
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "module ") {
+					parentModule := strings.TrimPrefix(line, "module ")
+					parentModule = strings.TrimSpace(parentModule)
+					moduleName = parentModule + "/" + req.DirName
+					break
+				}
+			}
+		}
+		// Fallback to directory name
+		if moduleName == "" {
+			moduleName = req.DirName
+		}
+	}
+
+	// Run go mod init
+	cmd := exec.Command("go", "mod", "init", moduleName)
+	cmd.Dir = fullPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// If go.mod already exists, that's okay
+		if !strings.Contains(string(output), "go.mod already exists") {
+			fmt.Printf("⚠️ go mod init warning: %s\n", string(output))
+		}
+	} else {
+		fmt.Printf("✅ Created go.mod with module: %s\n", moduleName)
+	}
+
+	// Run go mod tidy to add dependencies
+	cmd = exec.Command("go", "mod", "tidy")
+	cmd.Dir = fullPath
+	if output, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("⚠️ go mod tidy warning: %s\n", string(output))
+	}
+
+	// Return success with the created paths
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":    true,
+		"directory":  req.DirName,
+		"hooksFile":  req.DirName + "/generated_hooks.go",
+		"moduleName": moduleName,
+	})
 }
 
 func listFiles(w http.ResponseWriter, r *http.Request) {
