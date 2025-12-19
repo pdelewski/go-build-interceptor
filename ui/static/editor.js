@@ -77,6 +77,9 @@ class CodeEditor {
             // Initialize LSP connection
             this.initializeLSP();
 
+            // Register Monaco providers for Go
+            this.registerGoProviders();
+
             // Now initialize other components
             this.initializeEventListeners();
             this.loadFileTree();
@@ -117,7 +120,7 @@ class CodeEditor {
         }
     }
 
-    sendLSPRequest(method, params) {
+    sendLSPRequest(method, params, timeout = 5000) {
         if (!this.lspSocket || this.lspSocket.readyState !== WebSocket.OPEN) {
             console.warn('LSP socket not ready');
             return Promise.reject(new Error('LSP not connected'));
@@ -132,9 +135,228 @@ class CodeEditor {
         };
 
         return new Promise((resolve, reject) => {
-            this.lspPendingRequests.set(id, { resolve, reject });
+            const timer = setTimeout(() => {
+                this.lspPendingRequests.delete(id);
+                reject(new Error('LSP request timeout'));
+            }, timeout);
+
+            this.lspPendingRequests.set(id, {
+                resolve: (result) => {
+                    clearTimeout(timer);
+                    resolve(result);
+                },
+                reject: (err) => {
+                    clearTimeout(timer);
+                    reject(err);
+                }
+            });
+
             this.lspSocket.send(JSON.stringify(message));
         });
+    }
+
+    registerGoProviders() {
+        const self = this;
+
+        // Completion provider
+        monaco.languages.registerCompletionItemProvider('go', {
+            triggerCharacters: ['.', '(', '"', '/'],
+            provideCompletionItems: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return { suggestions: [] };
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return { suggestions: [] };
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/completion', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result) return { suggestions: [] };
+
+                    const items = result.items || result || [];
+                    const suggestions = items.map(item => ({
+                        label: item.label,
+                        kind: self.lspCompletionKindToMonaco(item.kind),
+                        detail: item.detail || '',
+                        documentation: item.documentation ?
+                            (typeof item.documentation === 'string' ? item.documentation : item.documentation.value) : '',
+                        insertText: item.insertText || item.label,
+                        insertTextRules: item.insertTextFormat === 2 ?
+                            monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                        range: undefined
+                    }));
+
+                    return { suggestions };
+                } catch (err) {
+                    console.error('Completion error:', err);
+                    return { suggestions: [] };
+                }
+            }
+        });
+
+        // Hover provider
+        monaco.languages.registerHoverProvider('go', {
+            provideHover: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return null;
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return null;
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/hover', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result || !result.contents) return null;
+
+                    let contents = [];
+                    if (typeof result.contents === 'string') {
+                        contents = [{ value: result.contents }];
+                    } else if (result.contents.value) {
+                        contents = [{ value: result.contents.value }];
+                    } else if (Array.isArray(result.contents)) {
+                        contents = result.contents.map(c =>
+                            typeof c === 'string' ? { value: c } : { value: c.value || '' }
+                        );
+                    }
+
+                    return {
+                        contents: contents.map(c => ({ value: '```go\n' + c.value + '\n```' }))
+                    };
+                } catch (err) {
+                    console.error('Hover error:', err);
+                    return null;
+                }
+            }
+        });
+
+        // Definition provider
+        monaco.languages.registerDefinitionProvider('go', {
+            provideDefinition: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return null;
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return null;
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/definition', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result) return null;
+
+                    const locations = Array.isArray(result) ? result : [result];
+                    return locations.map(loc => ({
+                        uri: monaco.Uri.parse(loc.uri),
+                        range: {
+                            startLineNumber: loc.range.start.line + 1,
+                            startColumn: loc.range.start.character + 1,
+                            endLineNumber: loc.range.end.line + 1,
+                            endColumn: loc.range.end.character + 1
+                        }
+                    }));
+                } catch (err) {
+                    console.error('Definition error:', err);
+                    return null;
+                }
+            }
+        });
+
+        // Signature help provider
+        monaco.languages.registerSignatureHelpProvider('go', {
+            signatureHelpTriggerCharacters: ['(', ','],
+            provideSignatureHelp: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return null;
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return null;
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/signatureHelp', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result || !result.signatures) return null;
+
+                    return {
+                        value: {
+                            signatures: result.signatures.map(sig => ({
+                                label: sig.label,
+                                documentation: sig.documentation,
+                                parameters: (sig.parameters || []).map(p => ({
+                                    label: p.label,
+                                    documentation: p.documentation
+                                }))
+                            })),
+                            activeSignature: result.activeSignature || 0,
+                            activeParameter: result.activeParameter || 0
+                        },
+                        dispose: () => {}
+                    };
+                } catch (err) {
+                    console.error('Signature help error:', err);
+                    return null;
+                }
+            }
+        });
+
+        console.log('Go language providers registered');
+    }
+
+    lspCompletionKindToMonaco(kind) {
+        const map = {
+            1: monaco.languages.CompletionItemKind.Text,
+            2: monaco.languages.CompletionItemKind.Method,
+            3: monaco.languages.CompletionItemKind.Function,
+            4: monaco.languages.CompletionItemKind.Constructor,
+            5: monaco.languages.CompletionItemKind.Field,
+            6: monaco.languages.CompletionItemKind.Variable,
+            7: monaco.languages.CompletionItemKind.Class,
+            8: monaco.languages.CompletionItemKind.Interface,
+            9: monaco.languages.CompletionItemKind.Module,
+            10: monaco.languages.CompletionItemKind.Property,
+            11: monaco.languages.CompletionItemKind.Unit,
+            12: monaco.languages.CompletionItemKind.Value,
+            13: monaco.languages.CompletionItemKind.Enum,
+            14: monaco.languages.CompletionItemKind.Keyword,
+            15: monaco.languages.CompletionItemKind.Snippet,
+            16: monaco.languages.CompletionItemKind.Color,
+            17: monaco.languages.CompletionItemKind.File,
+            18: monaco.languages.CompletionItemKind.Reference,
+            19: monaco.languages.CompletionItemKind.Folder,
+            20: monaco.languages.CompletionItemKind.EnumMember,
+            21: monaco.languages.CompletionItemKind.Constant,
+            22: monaco.languages.CompletionItemKind.Struct,
+            23: monaco.languages.CompletionItemKind.Event,
+            24: monaco.languages.CompletionItemKind.Operator,
+            25: monaco.languages.CompletionItemKind.TypeParameter
+        };
+        return map[kind] || monaco.languages.CompletionItemKind.Text;
     }
 
     sendLSPNotification(method, params) {
