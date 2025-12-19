@@ -2208,8 +2208,34 @@ async function generateHooksFile() {
             console.log('📝 Hooks file:', result.hooksFile);
             console.log('📦 Module name:', result.moduleName);
 
-            // Note: Don't refresh file tree here - it would overwrite the call graph view
-            // The file tree will be refreshed when user switches to Explorer
+            // Open the generated file in the editor (but don't switch side panel)
+            // Use the content we already generated instead of fetching from server
+            if (window.codeEditor) {
+                const filename = result.hooksFile;
+                const content = hooksContent; // Use the content we already have
+
+                // Check if tab already exists
+                if (window.codeEditor.openTabs.has(filename)) {
+                    // Close the existing tab first, then reopen with new content
+                    // This ensures a clean state
+                    const model = window.codeEditor.monacoModels.get(filename);
+                    if (model) {
+                        model.dispose();
+                        window.codeEditor.monacoModels.delete(filename);
+                    }
+                    window.codeEditor.openTabs.delete(filename);
+
+                    // Remove the tab element
+                    const tabElement = document.querySelector(`[data-filename="${filename}"]`);
+                    if (tabElement) {
+                        tabElement.remove();
+                    }
+                }
+
+                // Create new tab with the generated content
+                window.codeEditor.createOrSwitchTab(filename, content);
+                console.log('✅ Opened/updated generated hooks file in editor');
+            }
 
             // Show success message (non-blocking notification style)
             const notification = document.createElement('div');
