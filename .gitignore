@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+ui/node_modules/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go build output
+go-build-interceptor
+ui/ui
+hello/hello
+simple-http-server/simple-http-server
+
+# Build logs
+*.log
+go-build.json
+replay_script.sh
+
+# Temporary files
+hello/new-hook/
