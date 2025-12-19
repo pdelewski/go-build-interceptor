@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -11,7 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type FileRequest struct {
@@ -27,6 +32,160 @@ type FileResponse struct {
 
 // Global variable to store the root directory
 var rootDirectory string
+
+// WebSocket upgrader for LSP
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all origins for local development
+	},
+}
+
+// Global gopls process management
+var (
+	goplsCmd   *exec.Cmd
+	goplsStdin io.WriteCloser
+	goplsMutex sync.Mutex
+)
+
+// ensureGopls checks if gopls is installed and installs it if not
+func ensureGopls() error {
+	if _, err := exec.LookPath("gopls"); err != nil {
+		log.Println("gopls not found, installing...")
+		cmd := exec.Command("go", "install", "golang.org/x/tools/gopls@latest")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install gopls: %v", err)
+		}
+		log.Println("gopls installed successfully")
+	}
+	return nil
+}
+
+// startGopls starts the gopls language server process
+func startGopls() (*exec.Cmd, io.WriteCloser, io.ReadCloser, error) {
+	cmd := exec.Command("gopls", "serve")
+	cmd.Dir = rootDirectory
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to get stdin pipe: %v", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		return nil, nil, nil, fmt.Errorf("failed to get stdout pipe: %v", err)
+	}
+
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		return nil, nil, nil, fmt.Errorf("failed to start gopls: %v", err)
+	}
+
+	log.Printf("Started gopls (PID: %d) for directory: %s\n", cmd.Process.Pid, rootDirectory)
+	return cmd, stdin, stdout, nil
+}
+
+// handleLSPWebSocket handles WebSocket connections for LSP communication
+func handleLSPWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v\n", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Println("LSP WebSocket connection established")
+
+	// Start gopls for this connection
+	cmd, stdin, stdout, err := startGopls()
+	if err != nil {
+		log.Printf("Failed to start gopls: %v\n", err)
+		conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"error": "%s"}`, err.Error())))
+		return
+	}
+	defer func() {
+		stdin.Close()
+		cmd.Process.Kill()
+		cmd.Wait()
+		log.Println("gopls process terminated")
+	}()
+
+	// Create a channel to signal when to stop
+	done := make(chan struct{})
+	defer close(done)
+
+	// Goroutine to read from gopls stdout and send to WebSocket
+	go func() {
+		reader := bufio.NewReader(stdout)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				// Read Content-Length header
+				header, err := reader.ReadString('\n')
+				if err != nil {
+					if err != io.EOF {
+						log.Printf("Error reading from gopls: %v\n", err)
+					}
+					return
+				}
+
+				// Parse Content-Length
+				if !strings.HasPrefix(header, "Content-Length:") {
+					continue
+				}
+				var contentLength int
+				fmt.Sscanf(header, "Content-Length: %d", &contentLength)
+
+				// Read empty line
+				_, err = reader.ReadString('\n')
+				if err != nil {
+					return
+				}
+
+				// Read content
+				content := make([]byte, contentLength)
+				_, err = io.ReadFull(reader, content)
+				if err != nil {
+					log.Printf("Error reading content from gopls: %v\n", err)
+					return
+				}
+
+				// Send to WebSocket
+				if err := conn.WriteMessage(websocket.TextMessage, content); err != nil {
+					log.Printf("Error writing to WebSocket: %v\n", err)
+					return
+				}
+			}
+		}
+	}()
+
+	// Read from WebSocket and send to gopls stdin
+	for {
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("WebSocket error: %v\n", err)
+			}
+			break
+		}
+
+		// Format as LSP message with Content-Length header
+		lspMessage := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(message), message)
+		if _, err := stdin.Write([]byte(lspMessage)); err != nil {
+			log.Printf("Error writing to gopls: %v\n", err)
+			break
+		}
+	}
+}
 
 func main() {
 	// Parse command line flags
@@ -46,6 +205,12 @@ func main() {
 		log.Fatalf("Root directory does not exist: %s", rootDirectory)
 	}
 
+	// Ensure gopls is installed
+	if err := ensureGopls(); err != nil {
+		log.Printf("Warning: %v\n", err)
+		log.Println("LSP features will not be available")
+	}
+
 	// Serve static files from the static directory
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 
@@ -63,6 +228,9 @@ func main() {
 	http.HandleFunc("/api/workdir", getWorkDir)
 	http.HandleFunc("/api/compile", getCompile)
 	http.HandleFunc("/api/run-executable", getRunExecutable)
+
+	// LSP WebSocket endpoint
+	http.HandleFunc("/ws/lsp", handleLSPWebSocket)
 
 	fmt.Printf("🚀 Web Text Editor Server Starting...\n")
 	fmt.Printf("📝 Access the editor at: http://localhost:%s\n", *port)
@@ -97,10 +265,13 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
     <title>Code Editor</title>
     <link rel="stylesheet" href="/static/editor.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>">
-    <!-- Prism.js for syntax highlighting (local) -->
-    <link href="/static/prism-tomorrow.min.css" rel="stylesheet">
-    <script src="/static/prism.min.js"></script>
-    <script src="/static/prism-go.min.js"></script>
+    <!-- Monaco Editor -->
+    <script src="/static/monaco/vs/loader.js"></script>
+    <script>
+        require.config({ paths: { vs: '/static/monaco/vs' } });
+        // Root directory for LSP
+        window.PROJECT_ROOT = '` + rootDirectory + `';
+    </script>
 </head>
 <body class="vscode-theme">
     <!-- Top Menu Bar -->
@@ -373,8 +544,7 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                         </div>
                     </div>
                     <div id="editorContainer" class="editor-container hidden">
-                        <pre id="syntaxHighlight" class="syntax-highlight"><code id="highlightedCode" class="language-go"></code></pre>
-                        <textarea id="editor" class="editor-textarea" placeholder="// Start coding..." spellcheck="false"></textarea>
+                        <div id="monacoEditor" style="width: 100%; height: 100%;"></div>
                     </div>
                 </div>
             </div>

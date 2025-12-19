@@ -266,20 +266,80 @@ For more advanced use cases, you can completely rewrite a function's AST:
 
 ## Web UI
 
-The project includes a web-based user interface (`ui/web_main.go`) for interactive exploration:
+The project includes a web-based IDE (`ui/`) for interactive exploration and code editing with full Go language support.
 
-- File explorer with directory navigation
-- Code editor with syntax highlighting
-- Build output viewer
-- Static call graph visualization with multi-selection
-- Hook generation from selected functions
+### Features
 
-To start the web UI:
+- **Monaco Editor** - VS Code's editor with syntax highlighting, bracket matching, and minimap
+- **Go IntelliSense** - Autocomplete, hover documentation, go-to-definition via gopls LSP
+- **File Explorer** - Directory navigation with file tree
+- **Tab Management** - Multiple open files with unsaved change indicators
+- **Static Call Graph** - Visualization with multi-selection for hook generation
+- **Hook Generation** - Auto-generate hook code from selected functions
+- **Build Integration** - Compile and run with custom hooks
+
+### Building the UI
+
+**Prerequisites:**
+- Go 1.18+
+- Node.js and npm (for downloading Monaco Editor)
+- gopls (auto-installed if missing)
+
+**Quick Start (using Makefile):**
 
 ```bash
 cd ui
-go run web_main.go
+make setup    # Full setup: install deps, copy Monaco, build
+make run      # Run with ../hello project
 ```
+
+**Available Make Targets:**
+
+| Target | Description |
+|--------|-------------|
+| `make setup` | Full setup (deps + monaco + build) |
+| `make build` | Build the UI server |
+| `make run` | Build and run with ../hello |
+| `make run-dir DIR=/path` | Run with custom project |
+| `make clean` | Remove build artifacts |
+| `make help` | Show all targets |
+
+**Manual Setup:**
+
+```bash
+cd ui
+
+# Install Monaco Editor (one-time setup)
+npm install monaco-editor@0.45.0
+
+# Copy Monaco to static directory
+cp -r node_modules/monaco-editor/min/vs static/monaco/
+
+# Build the UI server
+go build -o ui .
+```
+
+**Running:**
+
+```bash
+# Start the UI server pointing to your Go project
+./ui -dir /path/to/your/go/project
+
+# Or use default port 9090
+./ui -dir ../hello
+```
+
+Open http://localhost:9090 in your browser.
+
+### LSP Features
+
+When editing `.go` files, you get full language support from gopls:
+
+- **Autocomplete** - Type `fmt.` to see all package methods
+- **Hover** - Hover over symbols for documentation
+- **Go to Definition** - Ctrl+Click or F12
+- **Diagnostics** - Real-time error and warning display
+- **Signature Help** - Parameter hints when typing function calls
 
 ## How It Works
 
@@ -338,8 +398,14 @@ go-build-interceptor/
 ├── hooks/
 │   └── hooks.go         # Hook framework definitions
 ├── ui/
-│   ├── web_main.go      # Web UI server
-│   └── static/          # Web UI assets
+│   ├── web_main.go      # Web UI server with LSP proxy
+│   ├── go.mod           # UI module dependencies
+│   ├── Makefile         # Build automation
+│   └── static/
+│       ├── editor.js    # Monaco editor integration + LSP client
+│       ├── editor.css   # Editor styles
+│       └── monaco/      # Monaco Editor files (via npm)
+│           └── vs/      # Monaco loader and editor
 ├── hello/               # Example application
 │   ├── main.go
 │   └── hello_hook/

@@ -1,4 +1,4 @@
-// VS Code-like IDE JavaScript
+// VS Code-like IDE JavaScript with Monaco Editor and LSP support
 class CodeEditor {
     constructor() {
         this.openTabs = new Map(); // Map of filename -> tab content
@@ -7,12 +7,19 @@ class CodeEditor {
         this.isModified = false;
         this.activeSidePanel = 'explorer';
         this.selectedExplorerItem = null; // Track selected item in explorer
-        
+
+        // Monaco editor instance
+        this.monacoEditor = null;
+        this.monacoModels = new Map(); // Map of filename -> monaco model
+
+        // LSP WebSocket connection
+        this.lspSocket = null;
+        this.lspRequestId = 0;
+        this.lspPendingRequests = new Map();
+
         // DOM elements
-        this.editor = document.getElementById('editor');
         this.editorContainer = document.getElementById('editorContainer');
-        this.syntaxHighlight = document.getElementById('syntaxHighlight');
-        this.highlightedCode = document.getElementById('highlightedCode');
+        this.monacoContainer = document.getElementById('monacoEditor');
         this.tabBar = document.getElementById('tabBar');
         this.fileTree = document.getElementById('fileTree');
         this.noEditorMessage = document.getElementById('noEditorMessage');
@@ -25,12 +32,490 @@ class CodeEditor {
             warnings: document.getElementById('fileWarnings'),
             gitBranch: document.getElementById('gitBranch')
         };
-        
-        this.initializeEventListeners();
-        this.loadFileTree();
-        this.updateUI();
-        this.initializeResize();
-        this.initializeTerminalResize();
+
+        // Initialize Monaco first, then other components
+        this.initializeMonaco();
+    }
+
+    initializeMonaco() {
+        require(['vs/editor/editor.main'], () => {
+            // Create Monaco editor instance
+            this.monacoEditor = monaco.editor.create(this.monacoContainer, {
+                value: '',
+                language: 'go',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                minimap: { enabled: true },
+                fontSize: 14,
+                fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace",
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                wordWrap: 'off',
+                tabSize: 4,
+                insertSpaces: false,
+                renderWhitespace: 'selection',
+                cursorBlinking: 'smooth',
+                cursorSmoothCaretAnimation: 'on',
+                smoothScrolling: true,
+                bracketPairColorization: { enabled: true },
+                guides: {
+                    bracketPairs: true,
+                    indentation: true
+                }
+            });
+
+            // Set up editor event listeners
+            this.monacoEditor.onDidChangeModelContent(() => this.onEditorChange());
+            this.monacoEditor.onDidChangeCursorPosition(() => this.updateStatusBar());
+            this.monacoEditor.onDidChangeCursorSelection(() => this.updateStatusBar());
+
+            // Add keyboard shortcuts
+            this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                this.saveCurrentFile();
+            });
+
+            // Initialize LSP connection
+            this.initializeLSP();
+
+            // Register Monaco providers for Go
+            this.registerGoProviders();
+
+            // Now initialize other components
+            this.initializeEventListeners();
+            this.loadFileTree();
+            this.updateUI();
+            this.initializeResize();
+            this.initializeTerminalResize();
+
+            console.log('Monaco Editor initialized successfully');
+        });
+    }
+
+    initializeLSP() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/lsp`;
+
+        try {
+            this.lspSocket = new WebSocket(wsUrl);
+
+            this.lspSocket.onopen = () => {
+                console.log('LSP WebSocket connected');
+                this.sendLSPInitialize();
+            };
+
+            this.lspSocket.onmessage = (event) => {
+                this.handleLSPMessage(JSON.parse(event.data));
+            };
+
+            this.lspSocket.onerror = (error) => {
+                console.error('LSP WebSocket error:', error);
+            };
+
+            this.lspSocket.onclose = () => {
+                console.log('LSP WebSocket closed, reconnecting in 5s...');
+                setTimeout(() => this.initializeLSP(), 5000);
+            };
+        } catch (error) {
+            console.error('Failed to connect to LSP:', error);
+        }
+    }
+
+    sendLSPRequest(method, params, timeout = 5000) {
+        if (!this.lspSocket || this.lspSocket.readyState !== WebSocket.OPEN) {
+            console.warn('LSP socket not ready');
+            return Promise.reject(new Error('LSP not connected'));
+        }
+
+        const id = ++this.lspRequestId;
+        const message = {
+            jsonrpc: '2.0',
+            id: id,
+            method: method,
+            params: params
+        };
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.lspPendingRequests.delete(id);
+                reject(new Error('LSP request timeout'));
+            }, timeout);
+
+            this.lspPendingRequests.set(id, {
+                resolve: (result) => {
+                    clearTimeout(timer);
+                    resolve(result);
+                },
+                reject: (err) => {
+                    clearTimeout(timer);
+                    reject(err);
+                }
+            });
+
+            this.lspSocket.send(JSON.stringify(message));
+        });
+    }
+
+    registerGoProviders() {
+        const self = this;
+
+        // Completion provider
+        monaco.languages.registerCompletionItemProvider('go', {
+            triggerCharacters: ['.', '(', '"', '/'],
+            provideCompletionItems: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return { suggestions: [] };
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return { suggestions: [] };
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/completion', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result) return { suggestions: [] };
+
+                    const items = result.items || result || [];
+                    const suggestions = items.map(item => ({
+                        label: item.label,
+                        kind: self.lspCompletionKindToMonaco(item.kind),
+                        detail: item.detail || '',
+                        documentation: item.documentation ?
+                            (typeof item.documentation === 'string' ? item.documentation : item.documentation.value) : '',
+                        insertText: item.insertText || item.label,
+                        insertTextRules: item.insertTextFormat === 2 ?
+                            monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                        range: undefined
+                    }));
+
+                    return { suggestions };
+                } catch (err) {
+                    console.error('Completion error:', err);
+                    return { suggestions: [] };
+                }
+            }
+        });
+
+        // Hover provider
+        monaco.languages.registerHoverProvider('go', {
+            provideHover: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return null;
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return null;
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/hover', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result || !result.contents) return null;
+
+                    let contents = [];
+                    if (typeof result.contents === 'string') {
+                        contents = [{ value: result.contents }];
+                    } else if (result.contents.value) {
+                        contents = [{ value: result.contents.value }];
+                    } else if (Array.isArray(result.contents)) {
+                        contents = result.contents.map(c =>
+                            typeof c === 'string' ? { value: c } : { value: c.value || '' }
+                        );
+                    }
+
+                    return {
+                        contents: contents.map(c => ({ value: '```go\n' + c.value + '\n```' }))
+                    };
+                } catch (err) {
+                    console.error('Hover error:', err);
+                    return null;
+                }
+            }
+        });
+
+        // Definition provider
+        monaco.languages.registerDefinitionProvider('go', {
+            provideDefinition: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return null;
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return null;
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/definition', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result) return null;
+
+                    const locations = Array.isArray(result) ? result : [result];
+                    return locations.map(loc => ({
+                        uri: monaco.Uri.parse(loc.uri),
+                        range: {
+                            startLineNumber: loc.range.start.line + 1,
+                            startColumn: loc.range.start.character + 1,
+                            endLineNumber: loc.range.end.line + 1,
+                            endColumn: loc.range.end.character + 1
+                        }
+                    }));
+                } catch (err) {
+                    console.error('Definition error:', err);
+                    return null;
+                }
+            }
+        });
+
+        // Signature help provider
+        monaco.languages.registerSignatureHelpProvider('go', {
+            signatureHelpTriggerCharacters: ['(', ','],
+            provideSignatureHelp: async (model, position) => {
+                if (!self.lspSocket || self.lspSocket.readyState !== WebSocket.OPEN) {
+                    return null;
+                }
+
+                const filename = self.activeTab;
+                if (!filename) return null;
+
+                try {
+                    const result = await self.sendLSPRequest('textDocument/signatureHelp', {
+                        textDocument: { uri: self.getDocumentUri(filename) },
+                        position: {
+                            line: position.lineNumber - 1,
+                            character: position.column - 1
+                        }
+                    });
+
+                    if (!result || !result.signatures) return null;
+
+                    return {
+                        value: {
+                            signatures: result.signatures.map(sig => ({
+                                label: sig.label,
+                                documentation: sig.documentation,
+                                parameters: (sig.parameters || []).map(p => ({
+                                    label: p.label,
+                                    documentation: p.documentation
+                                }))
+                            })),
+                            activeSignature: result.activeSignature || 0,
+                            activeParameter: result.activeParameter || 0
+                        },
+                        dispose: () => {}
+                    };
+                } catch (err) {
+                    console.error('Signature help error:', err);
+                    return null;
+                }
+            }
+        });
+
+        console.log('Go language providers registered');
+    }
+
+    lspCompletionKindToMonaco(kind) {
+        const map = {
+            1: monaco.languages.CompletionItemKind.Text,
+            2: monaco.languages.CompletionItemKind.Method,
+            3: monaco.languages.CompletionItemKind.Function,
+            4: monaco.languages.CompletionItemKind.Constructor,
+            5: monaco.languages.CompletionItemKind.Field,
+            6: monaco.languages.CompletionItemKind.Variable,
+            7: monaco.languages.CompletionItemKind.Class,
+            8: monaco.languages.CompletionItemKind.Interface,
+            9: monaco.languages.CompletionItemKind.Module,
+            10: monaco.languages.CompletionItemKind.Property,
+            11: monaco.languages.CompletionItemKind.Unit,
+            12: monaco.languages.CompletionItemKind.Value,
+            13: monaco.languages.CompletionItemKind.Enum,
+            14: monaco.languages.CompletionItemKind.Keyword,
+            15: monaco.languages.CompletionItemKind.Snippet,
+            16: monaco.languages.CompletionItemKind.Color,
+            17: monaco.languages.CompletionItemKind.File,
+            18: monaco.languages.CompletionItemKind.Reference,
+            19: monaco.languages.CompletionItemKind.Folder,
+            20: monaco.languages.CompletionItemKind.EnumMember,
+            21: monaco.languages.CompletionItemKind.Constant,
+            22: monaco.languages.CompletionItemKind.Struct,
+            23: monaco.languages.CompletionItemKind.Event,
+            24: monaco.languages.CompletionItemKind.Operator,
+            25: monaco.languages.CompletionItemKind.TypeParameter
+        };
+        return map[kind] || monaco.languages.CompletionItemKind.Text;
+    }
+
+    sendLSPNotification(method, params) {
+        if (!this.lspSocket || this.lspSocket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        const message = {
+            jsonrpc: '2.0',
+            method: method,
+            params: params
+        };
+
+        this.lspSocket.send(JSON.stringify(message));
+    }
+
+    sendLSPInitialize() {
+        const rootUri = 'file://' + (window.PROJECT_ROOT || '/');
+        this.sendLSPRequest('initialize', {
+            processId: null,
+            rootUri: rootUri,
+            rootPath: window.PROJECT_ROOT || '/',
+            capabilities: {
+                textDocument: {
+                    completion: {
+                        completionItem: {
+                            snippetSupport: true,
+                            documentationFormat: ['markdown', 'plaintext']
+                        }
+                    },
+                    hover: {
+                        contentFormat: ['markdown', 'plaintext']
+                    },
+                    definition: {},
+                    references: {},
+                    documentSymbol: {},
+                    formatting: {},
+                    publishDiagnostics: {
+                        relatedInformation: true
+                    }
+                }
+            }
+        }).then(() => {
+            this.sendLSPNotification('initialized', {});
+            console.log('LSP initialized');
+        }).catch(err => {
+            console.error('LSP initialize failed:', err);
+        });
+    }
+
+    handleLSPMessage(message) {
+        if (message.id !== undefined) {
+            // Response to a request
+            const pending = this.lspPendingRequests.get(message.id);
+            if (pending) {
+                this.lspPendingRequests.delete(message.id);
+                if (message.error) {
+                    pending.reject(message.error);
+                } else {
+                    pending.resolve(message.result);
+                }
+            }
+        } else if (message.method) {
+            // Notification from server
+            this.handleLSPNotification(message.method, message.params);
+        }
+    }
+
+    handleLSPNotification(method, params) {
+        switch (method) {
+            case 'textDocument/publishDiagnostics':
+                this.handleDiagnostics(params);
+                break;
+            default:
+                console.log('LSP notification:', method, params);
+        }
+    }
+
+    handleDiagnostics(params) {
+        if (!this.monacoEditor) return;
+
+        const model = this.monacoEditor.getModel();
+        if (!model) return;
+
+        // Convert LSP diagnostics to Monaco markers
+        const markers = (params.diagnostics || []).map(diag => ({
+            severity: this.lspSeverityToMonaco(diag.severity),
+            startLineNumber: diag.range.start.line + 1,
+            startColumn: diag.range.start.character + 1,
+            endLineNumber: diag.range.end.line + 1,
+            endColumn: diag.range.end.character + 1,
+            message: diag.message,
+            source: diag.source || 'gopls'
+        }));
+
+        monaco.editor.setModelMarkers(model, 'gopls', markers);
+
+        // Update status bar with error/warning counts
+        const errors = markers.filter(m => m.severity === monaco.MarkerSeverity.Error).length;
+        const warnings = markers.filter(m => m.severity === monaco.MarkerSeverity.Warning).length;
+
+        if (this.statusBar.errors) {
+            this.statusBar.errors.textContent = errors;
+            this.statusBar.errors.classList.toggle('hidden', errors === 0);
+        }
+        if (this.statusBar.warnings) {
+            this.statusBar.warnings.textContent = warnings;
+            this.statusBar.warnings.classList.toggle('hidden', warnings === 0);
+        }
+    }
+
+    lspSeverityToMonaco(severity) {
+        switch (severity) {
+            case 1: return monaco.MarkerSeverity.Error;
+            case 2: return monaco.MarkerSeverity.Warning;
+            case 3: return monaco.MarkerSeverity.Info;
+            case 4: return monaco.MarkerSeverity.Hint;
+            default: return monaco.MarkerSeverity.Info;
+        }
+    }
+
+    getDocumentUri(filename) {
+        // Construct proper file URI
+        const rootDir = window.PROJECT_ROOT || '';
+        let fullPath = filename;
+        if (!filename.startsWith('/') && rootDir) {
+            fullPath = rootDir + '/' + filename;
+        }
+        return 'file://' + fullPath;
+    }
+
+    notifyLSPDocumentOpen(filename, content) {
+        const languageId = filename.endsWith('.go') ? 'go' : 'plaintext';
+        this.sendLSPNotification('textDocument/didOpen', {
+            textDocument: {
+                uri: this.getDocumentUri(filename),
+                languageId: languageId,
+                version: 1,
+                text: content
+            }
+        });
+    }
+
+    notifyLSPDocumentChange(filename, content, version) {
+        this.sendLSPNotification('textDocument/didChange', {
+            textDocument: {
+                uri: this.getDocumentUri(filename),
+                version: version
+            },
+            contentChanges: [{ text: content }]
+        });
+    }
+
+    notifyLSPDocumentClose(filename) {
+        this.sendLSPNotification('textDocument/didClose', {
+            textDocument: {
+                uri: this.getDocumentUri(filename)
+            }
+        });
     }
     
     initializeEventListeners() {
@@ -41,38 +526,36 @@ class CodeEditor {
                 this.switchSidePanel(panel);
             });
         });
-        
+
         // Menu bar functionality
         this.setupMenus();
-        
-        // Editor events
-        this.editor.addEventListener('input', () => this.onEditorChange());
-        this.editor.addEventListener('scroll', () => {
-            this.syncScroll();
-            this.updateStatusBar();
-        });
-        this.editor.addEventListener('keydown', (e) => this.onKeyDown(e));
-        this.editor.addEventListener('keyup', () => this.updateStatusBar());
-        this.editor.addEventListener('click', () => this.updateStatusBar());
-        
-        // Context menu
-        this.editor.addEventListener('contextmenu', (e) => this.showContextMenu(e));
+
+        // Context menu (Monaco handles its own context menu, but we keep this for compatibility)
         document.addEventListener('click', (e) => {
             this.hideContextMenu();
             this.hideAllMenus();
         });
-        
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleGlobalShortcuts(e));
-        
+
         // File tree keyboard navigation
-        this.fileTree.addEventListener('keydown', (e) => this.handleExplorerKeyDown(e));
-        
+        if (this.fileTree) {
+            this.fileTree.addEventListener('keydown', (e) => this.handleExplorerKeyDown(e));
+        }
+
         // Window events
         window.addEventListener('beforeunload', (e) => this.onBeforeUnload(e));
-        
+
         // File tree refresh
         document.getElementById('refreshBtn')?.addEventListener('click', () => this.loadFileTree());
+
+        // Handle window resize for Monaco
+        window.addEventListener('resize', () => {
+            if (this.monacoEditor) {
+                this.monacoEditor.layout();
+            }
+        });
     }
     
     setupMenus() {
@@ -313,16 +796,16 @@ class CodeEditor {
             this.switchTab(filename);
             return;
         }
-        
+
         // Create new tab
         const tab = document.createElement('div');
         tab.className = 'tab';
         tab.dataset.filename = filename;
-        
+
         const tabName = document.createElement('span');
         tabName.textContent = filename.split('/').pop();
         tab.appendChild(tabName);
-        
+
         const closeBtn = document.createElement('span');
         closeBtn.className = 'tab-close';
         closeBtn.innerHTML = '×';
@@ -331,32 +814,73 @@ class CodeEditor {
             this.closeTab(filename);
         });
         tab.appendChild(closeBtn);
-        
+
         tab.addEventListener('click', () => this.switchTab(filename));
-        
+
         this.tabBar.appendChild(tab);
-        
+
+        // Create Monaco model for this file
+        const language = this.getLanguageForFile(filename);
+        const uri = monaco.Uri.parse('file://' + filename);
+        let model = monaco.editor.getModel(uri);
+        if (!model) {
+            model = monaco.editor.createModel(content, language, uri);
+        } else {
+            model.setValue(content);
+        }
+        this.monacoModels.set(filename, model);
+
         // Store tab content
         this.openTabs.set(filename, {
             content,
             originalContent: content,
-            modified: false
+            modified: false,
+            version: 1
         });
-        
+
+        // Notify LSP about opened document
+        this.notifyLSPDocumentOpen(filename, content);
+
         this.switchTab(filename);
         this.updateUI();
     }
-    
+
+    getLanguageForFile(filename) {
+        const ext = filename.split('.').pop()?.toLowerCase();
+        const languageMap = {
+            'go': 'go',
+            'js': 'javascript',
+            'ts': 'typescript',
+            'json': 'json',
+            'md': 'markdown',
+            'css': 'css',
+            'html': 'html',
+            'htm': 'html',
+            'yaml': 'yaml',
+            'yml': 'yaml',
+            'xml': 'xml',
+            'sh': 'shell',
+            'bash': 'shell',
+            'py': 'python',
+            'rs': 'rust',
+            'c': 'c',
+            'cpp': 'cpp',
+            'h': 'c',
+            'hpp': 'cpp'
+        };
+        return languageMap[ext] || 'plaintext';
+    }
+
     switchTab(filename) {
         // Save current tab state
-        if (this.activeTab) {
+        if (this.activeTab && this.monacoEditor) {
             const tabData = this.openTabs.get(this.activeTab);
             if (tabData) {
-                tabData.content = this.editor.value;
+                tabData.content = this.monacoEditor.getValue();
                 tabData.modified = tabData.content !== tabData.originalContent;
             }
         }
-        
+
         // Update UI
         document.querySelectorAll('.tab').forEach(tab => {
             tab.classList.remove('active');
@@ -369,39 +893,54 @@ class CodeEditor {
                 }
             }
         });
-        
-        // Load new tab content
-        const tabData = this.openTabs.get(filename);
-        if (tabData) {
-            this.editor.value = tabData.content;
+
+        // Switch to the Monaco model for this file
+        const model = this.monacoModels.get(filename);
+        if (model && this.monacoEditor) {
+            this.monacoEditor.setModel(model);
             this.activeTab = filename;
-            this.currentContent = tabData.content;
-            this.isModified = tabData.modified;
+            const tabData = this.openTabs.get(filename);
+            if (tabData) {
+                this.currentContent = tabData.content;
+                this.isModified = tabData.modified;
+            }
         }
-        
+
         this.updateUI();
         this.updateStatusBar();
-        this.editor.focus();
+        if (this.monacoEditor) {
+            this.monacoEditor.focus();
+        }
     }
     
     closeTab(filename) {
         const tabData = this.openTabs.get(filename);
-        
+
         if (tabData?.modified) {
             if (!confirm(`'${filename}' has unsaved changes. Close anyway?`)) {
                 return;
             }
         }
-        
+
         // Remove tab from DOM
         const tab = document.querySelector(`[data-filename="${filename}"]`);
         if (tab) {
             tab.remove();
         }
-        
+
+        // Dispose Monaco model
+        const model = this.monacoModels.get(filename);
+        if (model) {
+            model.dispose();
+            this.monacoModels.delete(filename);
+        }
+
+        // Notify LSP about closed document
+        this.notifyLSPDocumentClose(filename);
+
         // Remove from open tabs
         this.openTabs.delete(filename);
-        
+
         // Switch to another tab or show welcome screen
         if (this.activeTab === filename) {
             const remainingTabs = Array.from(this.openTabs.keys());
@@ -409,19 +948,22 @@ class CodeEditor {
                 this.switchTab(remainingTabs[remainingTabs.length - 1]);
             } else {
                 this.activeTab = null;
-                this.editor.value = '';
+                if (this.monacoEditor) {
+                    this.monacoEditor.setModel(null);
+                }
                 this.updateUI();
             }
         }
     }
-    
+
     onEditorChange() {
-        if (this.activeTab) {
+        if (this.activeTab && this.monacoEditor) {
             const tabData = this.openTabs.get(this.activeTab);
             if (tabData) {
-                tabData.content = this.editor.value;
+                tabData.content = this.monacoEditor.getValue();
                 tabData.modified = tabData.content !== tabData.originalContent;
-                
+                tabData.version = (tabData.version || 0) + 1;
+
                 // Update tab visual state
                 const tab = document.querySelector(`[data-filename="${this.activeTab}"]`);
                 if (tab) {
@@ -431,48 +973,13 @@ class CodeEditor {
                         tab.classList.remove('modified');
                     }
                 }
+
+                // Notify LSP about document change
+                this.notifyLSPDocumentChange(this.activeTab, tabData.content, tabData.version);
             }
         }
-        
-        // Update syntax highlighting for Go files
-        this.updateSyntaxHighlighting();
+
         this.updateStatusBar();
-    }
-    
-    onKeyDown(e) {
-        // Tab handling
-        if (e.key === 'Tab') {
-            e.preventDefault();
-            const start = this.editor.selectionStart;
-            const end = this.editor.selectionEnd;
-            
-            if (e.shiftKey) {
-                // Remove indentation
-                const lines = this.editor.value.split('\n');
-                const startLine = this.editor.value.substring(0, start).split('\n').length - 1;
-                const endLine = this.editor.value.substring(0, end).split('\n').length - 1;
-                
-                for (let i = startLine; i <= endLine; i++) {
-                    if (lines[i].startsWith('    ')) {
-                        lines[i] = lines[i].substring(4);
-                    } else if (lines[i].startsWith('\t')) {
-                        lines[i] = lines[i].substring(1);
-                    }
-                }
-                
-                this.editor.value = lines.join('\n');
-            } else {
-                // Add indentation
-                this.editor.value = 
-                    this.editor.value.substring(0, start) + 
-                    '    ' + 
-                    this.editor.value.substring(end);
-                
-                this.editor.selectionStart = this.editor.selectionEnd = start + 4;
-            }
-            
-            this.onEditorChange();
-        }
     }
     
     handleGlobalShortcuts(e) {
@@ -509,33 +1016,46 @@ class CodeEditor {
             this.setStatus('No file to save', 'warning');
             return;
         }
-        
+
+        if (!this.monacoEditor) {
+            this.setStatus('Editor not initialized', 'error');
+            return;
+        }
+
         try {
             this.setStatus('Saving...', 'info');
-            
+
+            const content = this.monacoEditor.getValue();
             const response = await fetch('/api/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     filename: this.activeTab,
-                    content: this.editor.value
+                    content: content
                 })
             });
-            
+
             const result = await response.json();
-            
+
             if (result.success) {
                 const tabData = this.openTabs.get(this.activeTab);
                 if (tabData) {
-                    tabData.originalContent = this.editor.value;
+                    tabData.originalContent = content;
                     tabData.modified = false;
-                    
+
                     const tab = document.querySelector(`[data-filename="${this.activeTab}"]`);
                     if (tab) {
                         tab.classList.remove('modified');
                     }
                 }
-                
+
+                // Notify LSP about the save (some language servers use this)
+                this.sendLSPNotification('textDocument/didSave', {
+                    textDocument: {
+                        uri: this.getDocumentUri(this.activeTab)
+                    }
+                });
+
                 this.setStatus(`Saved ${this.activeTab}`, 'success');
             } else {
                 this.setStatus(`Error: ${result.error}`, 'error');
@@ -755,94 +1275,61 @@ class CodeEditor {
         if (this.activeTab && this.openTabs.has(this.activeTab)) {
             this.noEditorMessage.classList.add('hidden');
             this.editorContainer.classList.remove('hidden');
-            this.updateSyntaxHighlighting();
+            // Trigger Monaco layout update
+            if (this.monacoEditor) {
+                this.monacoEditor.layout();
+            }
         } else {
             this.noEditorMessage.classList.remove('hidden');
             this.editorContainer.classList.add('hidden');
         }
     }
-    
-    syncScroll() {
-        if (this.syntaxHighlight && this.editor) {
-            this.syntaxHighlight.scrollTop = this.editor.scrollTop;
-            this.syntaxHighlight.scrollLeft = this.editor.scrollLeft;
-        }
-    }
-    
-    updateSyntaxHighlighting() {
-        if (!this.activeTab) {
-            return;
-        }
-        
-        // Check if this is a Go file
-        const isGoFile = this.activeTab.toLowerCase().endsWith('.go');
-        
-        if (isGoFile) {
-            console.log('🐹 Go file detected, enabling syntax highlighting');
-            
-            // Enable syntax highlighting for Go files
-            this.editorContainer.classList.add('syntax-active');
-            this.highlightedCode.textContent = this.editor.value;
-            
-            // Debug: Check if Prism is available
-            if (window.Prism) {
-                console.log('✅ Prism.js is loaded');
-                console.log('📝 Highlighting code:', this.editor.value.substring(0, 50) + '...');
-                
-                // Use Prism.js to highlight the code
-                Prism.highlightElement(this.highlightedCode);
-                console.log('🎨 Syntax highlighting applied');
-            } else {
-                console.error('❌ Prism.js is not loaded');
-            }
-        } else {
-            // Disable syntax highlighting for non-Go files
-            console.log('📄 Non-Go file, disabling syntax highlighting');
-            this.editorContainer.classList.remove('syntax-active');
-        }
-    }
-    
+
     updateStatusBar() {
-        if (!this.activeTab) return;
-        
-        // Cursor position
-        const cursorPos = this.editor.selectionStart;
-        const textBeforeCursor = this.editor.value.substring(0, cursorPos);
-        const lines = textBeforeCursor.split('\n');
-        const line = lines.length;
-        const col = lines[lines.length - 1].length + 1;
-        
-        this.statusBar.selection.textContent = `Ln ${line}, Col ${col}`;
-        
+        if (!this.activeTab || !this.monacoEditor) return;
+
+        // Get cursor position from Monaco
+        const position = this.monacoEditor.getPosition();
+        if (position) {
+            this.statusBar.selection.textContent = `Ln ${position.lineNumber}, Col ${position.column}`;
+        }
+
         // File type
         if (this.activeTab) {
             const ext = this.activeTab.split('.').pop()?.toLowerCase();
             const fileTypes = {
                 'go': 'Go',
                 'js': 'JavaScript',
-                'ts': 'TypeScript', 
+                'ts': 'TypeScript',
                 'json': 'JSON',
                 'md': 'Markdown',
                 'css': 'CSS',
                 'html': 'HTML',
-                'txt': 'Plain Text'
+                'txt': 'Plain Text',
+                'py': 'Python',
+                'rs': 'Rust',
+                'c': 'C',
+                'cpp': 'C++',
+                'yaml': 'YAML',
+                'yml': 'YAML'
             };
             this.statusBar.fileType.textContent = fileTypes[ext] || 'Plain Text';
         }
-        
+
         // Selection info if text is selected
-        if (this.editor.selectionStart !== this.editor.selectionEnd) {
-            const selectedText = this.editor.value.substring(
-                this.editor.selectionStart, 
-                this.editor.selectionEnd
-            );
-            const selectedLines = selectedText.split('\n').length;
-            const selectedChars = selectedText.length;
-            
-            if (selectedLines > 1) {
-                this.statusBar.selection.textContent += ` (${selectedLines} lines, ${selectedChars} chars selected)`;
-            } else {
-                this.statusBar.selection.textContent += ` (${selectedChars} chars selected)`;
+        const selection = this.monacoEditor.getSelection();
+        if (selection && !selection.isEmpty()) {
+            const model = this.monacoEditor.getModel();
+            if (model) {
+                const selectedText = model.getValueInRange(selection);
+                const selectedLines = selectedText.split('\n').length;
+                const selectedChars = selectedText.length;
+
+                if (selectedLines > 1) {
+                    this.statusBar.selection.textContent += ` (${selectedLines} lines, ${selectedChars} chars selected)`;
+                } else {
+                    this.statusBar.selection.textContent += ` (${selectedChars} chars selected)`;
+                }
             }
         }
     }
@@ -991,22 +1478,37 @@ class CodeEditor {
     }
 }
 
-// Context menu functions
+// Context menu functions - Monaco handles these via its built-in commands
 function cutText() {
-    document.execCommand('cut');
+    if (window.codeEditor?.monacoEditor) {
+        window.codeEditor.monacoEditor.focus();
+        window.codeEditor.monacoEditor.trigger('keyboard', 'editor.action.clipboardCutAction');
+    }
 }
 
 function copyText() {
-    document.execCommand('copy');
+    if (window.codeEditor?.monacoEditor) {
+        window.codeEditor.monacoEditor.focus();
+        window.codeEditor.monacoEditor.trigger('keyboard', 'editor.action.clipboardCopyAction');
+    }
 }
 
 function pasteText() {
-    document.execCommand('paste');
+    if (window.codeEditor?.monacoEditor) {
+        window.codeEditor.monacoEditor.focus();
+        window.codeEditor.monacoEditor.trigger('keyboard', 'editor.action.clipboardPasteAction');
+    }
 }
 
 function selectAllText() {
-    const editor = document.getElementById('editor');
-    editor.select();
+    if (window.codeEditor?.monacoEditor) {
+        const model = window.codeEditor.monacoEditor.getModel();
+        if (model) {
+            const fullRange = model.getFullModelRange();
+            window.codeEditor.monacoEditor.setSelection(fullRange);
+            window.codeEditor.monacoEditor.focus();
+        }
+    }
 }
 
 // File operations
@@ -1029,10 +1531,10 @@ function saveCurrentFile() {
 
 function saveAsCurrentFile() {
     const filename = prompt('Save as filename:');
-    if (filename && window.codeEditor?.activeTab) {
+    if (filename && window.codeEditor?.activeTab && window.codeEditor?.monacoEditor) {
         const editor = window.codeEditor;
-        const content = editor.editor.value;
-        
+        const content = editor.monacoEditor.getValue();
+
         // Create new tab with content
         editor.createOrSwitchTab(filename, content);
         editor.saveCurrentFile();
@@ -1061,11 +1563,15 @@ function closeAllTabs() {
 }
 
 function undoAction() {
-    document.execCommand('undo');
+    if (window.codeEditor?.monacoEditor) {
+        window.codeEditor.monacoEditor.trigger('keyboard', 'undo');
+    }
 }
 
 function redoAction() {
-    document.execCommand('redo');
+    if (window.codeEditor?.monacoEditor) {
+        window.codeEditor.monacoEditor.trigger('keyboard', 'redo');
+    }
 }
 
 function findInFile() {
