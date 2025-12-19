@@ -1594,7 +1594,10 @@ function toggleGitPanel() {
 async function showFunctions() {
     // Call external go-build-interceptor --pack-functions and show output in explorer
     console.log('Functions view - calling go-build-interceptor --pack-functions');
-    
+
+    // Hide any previous selection toolbar
+    hideSelectionToolbar();
+
     try {
         // Switch to explorer panel first
         window.codeEditor?.switchSidePanel('explorer');
@@ -1623,23 +1626,11 @@ async function showFunctions() {
                 const header = document.createElement('div');
                 header.className = 'view-header';
                 header.innerHTML = `
-                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
                         <span>⚙️ FUNCTIONS</span>
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <span id="functionSelectionCount" style="color: #4fc3f7; font-size: 11px; display: none;"></span>
-                            <button id="generateFunctionHooksBtn" onclick="generateHooksFromFunctions()" style="padding: 2px 6px; background: #4caf50; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px; display: none;" title="Generate Hooks File">
-                                🔧 Generate Hooks
-                            </button>
-                            <button onclick="selectAllFunctionItems()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Select All">
-                                ☑ All
-                            </button>
-                            <button onclick="clearFunctionSelection()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Clear Selection">
-                                ☐ Clear
-                            </button>
-                            <button onclick="loadFilesIntoExplorer()" style="padding: 2px 6px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">
-                                ← Back
-                            </button>
-                        </div>
+                        <button onclick="loadFilesIntoExplorer()" style="padding: 2px 6px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">
+                            ← Back
+                        </button>
                     </div>
                 `;
                 fileTree.appendChild(header);
@@ -1867,9 +1858,12 @@ function updateStatus(message) {
 }
 
 async function showStaticCallGraph() {
+    // Hide any previous selection toolbar
+    hideSelectionToolbar();
+
     try {
         console.log('📊 Fetching static call graph...');
-        
+
         const response = await fetch('/api/callgraph');
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -1887,27 +1881,15 @@ async function showStaticCallGraph() {
         const fileTree = document.getElementById('fileTree');
         fileTree.innerHTML = '';
         
-        // Add header with selection controls
+        // Add header
         const header = document.createElement('div');
         header.className = 'view-header';
         header.innerHTML = `
-            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
                 <span>📊 Static Call Graph</span>
-                <div style="display: flex; align-items: center; gap: 6px;">
-                    <span id="callGraphSelectionCount" style="color: #4fc3f7; font-size: 11px; display: none;"></span>
-                    <button id="generateHooksBtn" onclick="generateHooksFile()" style="padding: 2px 6px; background: #4caf50; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px; display: none;" title="Generate Hooks File">
-                        🔧 Generate Hooks
-                    </button>
-                    <button onclick="selectAllCallGraphItems()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Select All">
-                        ☑ All
-                    </button>
-                    <button onclick="clearCallGraphSelection()" style="padding: 2px 6px; background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 10px;" title="Clear Selection">
-                        ☐ Clear
-                    </button>
-                    <button onclick="loadFilesIntoExplorer()" style="padding: 2px 6px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">
-                        ← Back
-                    </button>
-                </div>
+                <button onclick="loadFilesIntoExplorer()" style="padding: 2px 6px; background: #007acc; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 10px;">
+                    ← Back
+                </button>
             </div>
         `;
         fileTree.appendChild(header);
@@ -2003,6 +1985,60 @@ let selectedCallGraphItems = new Set();
 
 // Track selected function items (multi-select for Functions view)
 let selectedFunctionItems = new Set();
+
+// Track current selection context ('functions' or 'callgraph')
+let currentSelectionContext = null;
+
+// Update the main toolbar selection controls
+function updateSelectionToolbar(count, context, contextLabel) {
+    const toolbar = document.getElementById('selectionToolbar');
+    const contextDisplay = document.getElementById('selectionContext');
+
+    if (count > 0) {
+        currentSelectionContext = context;
+        if (toolbar) {
+            toolbar.style.display = 'flex';
+        }
+        if (contextDisplay) {
+            contextDisplay.textContent = `${contextLabel}: ${count} selected`;
+        }
+    } else {
+        // Only hide if this context was active
+        if (currentSelectionContext === context) {
+            currentSelectionContext = null;
+            if (toolbar) {
+                toolbar.style.display = 'none';
+            }
+        }
+    }
+}
+
+// Generate hooks from current selection (toolbar button handler)
+function generateHooksFromSelection() {
+    if (currentSelectionContext === 'functions') {
+        generateHooksFromFunctions();
+    } else if (currentSelectionContext === 'callgraph') {
+        generateHooksFile();
+    }
+}
+
+// Select all items based on current context (toolbar button handler)
+function selectAllFromToolbar() {
+    if (currentSelectionContext === 'functions' || document.querySelector('.function-checkbox')) {
+        selectAllFunctionItems();
+    } else if (currentSelectionContext === 'callgraph' || document.querySelector('.call-graph-checkbox')) {
+        selectAllCallGraphItems();
+    }
+}
+
+// Clear selection based on current context (toolbar button handler)
+function clearSelectionFromToolbar() {
+    if (currentSelectionContext === 'functions') {
+        clearFunctionSelection();
+    } else if (currentSelectionContext === 'callgraph') {
+        clearCallGraphSelection();
+    }
+}
 
 function renderCallTree(container, nodes, level = 0) {
     nodes.forEach(node => {
@@ -2164,19 +2200,10 @@ function renderCallTree(container, nodes, level = 0) {
 
 // Update selection count display and show/hide Generate Hooks button
 function updateCallGraphSelectionCount() {
-    const countDisplay = document.getElementById('callGraphSelectionCount');
-    const generateBtn = document.getElementById('generateHooksBtn');
     const count = selectedCallGraphItems.size;
 
-    if (countDisplay) {
-        countDisplay.textContent = count > 0 ? `${count} selected` : '';
-        countDisplay.style.display = count > 0 ? 'inline' : 'none';
-    }
-
-    // Show/hide Generate Hooks button based on selection
-    if (generateBtn) {
-        generateBtn.style.display = count > 0 ? 'inline-block' : 'none';
-    }
+    // Update main toolbar
+    updateSelectionToolbar(count, 'callgraph', 'Static Call Graph');
 }
 
 // Get selected call graph items
@@ -2213,19 +2240,10 @@ function selectAllCallGraphItems() {
 
 // Update the function selection count display
 function updateFunctionSelectionCount() {
-    const countDisplay = document.getElementById('functionSelectionCount');
-    const generateBtn = document.getElementById('generateFunctionHooksBtn');
     const count = selectedFunctionItems.size;
 
-    if (countDisplay) {
-        countDisplay.textContent = count > 0 ? `${count} selected` : '';
-        countDisplay.style.display = count > 0 ? 'inline' : 'none';
-    }
-
-    // Show/hide Generate Hooks button based on selection
-    if (generateBtn) {
-        generateBtn.style.display = count > 0 ? 'inline-block' : 'none';
-    }
+    // Update main toolbar
+    updateSelectionToolbar(count, 'functions', 'Functions');
 }
 
 // Get selected function items
@@ -3037,8 +3055,21 @@ function escapeHtml(text) {
 
 // Function to load files back into explorer
 function loadFilesIntoExplorer() {
+    // Clear any selections and hide toolbar when going back to file explorer
+    hideSelectionToolbar();
     window.codeEditor?.switchSidePanel('explorer');
     window.codeEditor?.loadFileTree();
+}
+
+// Hide the selection toolbar and clear all selections
+function hideSelectionToolbar() {
+    const toolbar = document.getElementById('selectionToolbar');
+    if (toolbar) {
+        toolbar.style.display = 'none';
+    }
+    currentSelectionContext = null;
+    selectedFunctionItems.clear();
+    selectedCallGraphItems.clear();
 }
 
 // Initialize the IDE when page loads

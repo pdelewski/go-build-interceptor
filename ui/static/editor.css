@@ -207,6 +207,30 @@ body {
   color: var(--vscode-text-muted);
 }
 
+/* Selection toolbar */
+.toolbar-selection {
+  display: flex;
+  align-items: center;
+  background: rgba(76, 175, 80, 0.1);
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin: 0 8px;
+}
+
+.toolbar-button-success {
+  background: #4caf50;
+  color: white;
+}
+
+.toolbar-button-success:hover {
+  background: #45a049;
+  color: white;
+}
+
+.toolbar-button-success:active {
+  background: #3d8b40;
+}
+
 /* IDE Container */
 .ide-container {
   display: flex;

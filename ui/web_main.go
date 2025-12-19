@@ -432,6 +432,23 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                 <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M10 1v1h3.3l.4.2.3.3V14.5l-.5.5h-11l-.5-.5v-12l.3-.3.4-.2H6V1h4zm0 2v1H6V3H3v11h10V3h-3z"/></svg>
             </button>
         </div>
+        <!-- Selection Controls Toolbar (shown when items selected in Functions/Call Graph views) -->
+        <div id="selectionToolbar" class="toolbar-section toolbar-selection" style="display: none;">
+            <div class="toolbar-separator"></div>
+            <span id="selectionContext" style="color: #4fc3f7; font-size: 12px; margin-right: 8px; white-space: nowrap;"></span>
+            <button class="toolbar-button toolbar-button-success" onclick="generateHooksFromSelection()" title="Generate Hooks File">
+                <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M14.773 3.485l-.78-.781a.5.5 0 0 0-.707 0L6.5 9.49l-2.793-2.792a.5.5 0 0 0-.707 0l-.78.781a.5.5 0 0 0 0 .707l3.926 3.927a.5.5 0 0 0 .707 0l7.92-7.921a.5.5 0 0 0 0-.707z"/></svg>
+                <span style="margin-left: 4px;">Generate Hooks</span>
+            </button>
+            <button class="toolbar-button" onclick="selectAllFromToolbar()" title="Select All">
+                <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M3 3v10h10V3H3zm9 9H4V4h8v8z"/><path fill="currentColor" d="M6 6h4v4H6z"/></svg>
+                <span style="margin-left: 4px;">All</span>
+            </button>
+            <button class="toolbar-button" onclick="clearSelectionFromToolbar()" title="Clear Selection">
+                <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M3 3v10h10V3H3zm9 9H4V4h8v8z"/></svg>
+                <span style="margin-left: 4px;">Clear</span>
+            </button>
+        </div>
         <div class="toolbar-section toolbar-right">
             <button class="toolbar-button" onclick="findInFile()" title="Find in Files (Ctrl+F)">
                 <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="m15.7 13.3-3.81-3.83A5.93 5.93 0 0 0 13 6c0-3.31-2.69-6-6-6S1 2.69 1 6s2.69 6 6 6c1.3 0 2.48-.41 3.47-1.11l3.83 3.81c.19.2.45.3.7.3.25 0 .52-.09.7-.3a.996.996 0 0 0 0-1.4ZM7 10.7c-2.59 0-4.7-2.11-4.7-4.7 0-2.59 2.11-4.7 4.7-4.7 2.59 0 4.7 2.11 4.7 4.7 0 2.59-2.11 4.7-4.7 4.7Z"/></svg>
