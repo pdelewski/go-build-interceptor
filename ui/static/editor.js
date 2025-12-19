@@ -2208,10 +2208,8 @@ async function generateHooksFile() {
             console.log('📝 Hooks file:', result.hooksFile);
             console.log('📦 Module name:', result.moduleName);
 
-            // Refresh the file explorer to show the new directory (but stay on call graph)
-            if (window.codeEditor) {
-                window.codeEditor.loadFileTree();
-            }
+            // Note: Don't refresh file tree here - it would overwrite the call graph view
+            // The file tree will be refreshed when user switches to Explorer
 
             // Show success message (non-blocking notification style)
             const notification = document.createElement('div');
