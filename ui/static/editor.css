@@ -243,6 +243,21 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* Breakpoint styling */
+.breakpoint-decoration {
+  background: #e51400;
+  border-radius: 50%;
+  width: 12px !important;
+  height: 12px !important;
+  margin-left: 4px;
+  margin-top: 3px;
+  cursor: pointer;
+}
+
+.breakpoint-line {
+  background: rgba(229, 20, 0, 0.15);
+}
+
 /* IDE Container */
 .ide-container {
   display: flex;

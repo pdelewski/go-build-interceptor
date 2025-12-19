@@ -12,6 +12,10 @@ class CodeEditor {
         this.monacoEditor = null;
         this.monacoModels = new Map(); // Map of filename -> monaco model
 
+        // Breakpoints tracking: Map of filename -> Set of line numbers
+        this.breakpoints = new Map();
+        this.breakpointDecorations = new Map(); // Map of filename -> decoration IDs
+
         // LSP WebSocket connection
         this.lspSocket = null;
         this.lspRequestId = 0;
@@ -61,7 +65,8 @@ class CodeEditor {
                 guides: {
                     bracketPairs: true,
                     indentation: true
-                }
+                },
+                glyphMargin: true  // Enable glyph margin for breakpoints
             });
 
             // Set up editor event listeners
@@ -72,6 +77,24 @@ class CodeEditor {
             // Add keyboard shortcuts
             this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
                 this.saveCurrentFile();
+            });
+
+            // Add F9 shortcut to toggle breakpoint at current line
+            this.monacoEditor.addCommand(monaco.KeyCode.F9, () => {
+                const position = this.monacoEditor.getPosition();
+                if (position && this.activeTab) {
+                    this.toggleBreakpoint(this.activeTab, position.lineNumber);
+                }
+            });
+
+            // Add click handler for glyph margin (breakpoints)
+            this.monacoEditor.onMouseDown((e) => {
+                if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+                    const lineNumber = e.target.position?.lineNumber;
+                    if (lineNumber && this.activeTab) {
+                        this.toggleBreakpoint(this.activeTab, lineNumber);
+                    }
+                }
             });
 
             // Initialize LSP connection
@@ -910,9 +933,11 @@ class CodeEditor {
         this.updateStatusBar();
         if (this.monacoEditor) {
             this.monacoEditor.focus();
+            // Restore breakpoints for this file
+            this.updateBreakpointDecorations(filename);
         }
     }
-    
+
     closeTab(filename) {
         const tabData = this.openTabs.get(filename);
 
@@ -938,6 +963,10 @@ class CodeEditor {
         // Notify LSP about closed document
         this.notifyLSPDocumentClose(filename);
 
+        // Clean up breakpoints for this file
+        this.breakpoints.delete(filename);
+        this.breakpointDecorations.delete(filename);
+
         // Remove from open tabs
         this.openTabs.delete(filename);
 
@@ -954,6 +983,91 @@ class CodeEditor {
                 this.updateUI();
             }
         }
+    }
+
+    // Toggle breakpoint at the specified line
+    toggleBreakpoint(filename, lineNumber) {
+        if (!this.breakpoints.has(filename)) {
+            this.breakpoints.set(filename, new Set());
+        }
+
+        const fileBreakpoints = this.breakpoints.get(filename);
+
+        if (fileBreakpoints.has(lineNumber)) {
+            // Remove breakpoint
+            fileBreakpoints.delete(lineNumber);
+            console.log(`🔴 Removed breakpoint at ${filename}:${lineNumber}`);
+        } else {
+            // Add breakpoint
+            fileBreakpoints.add(lineNumber);
+            console.log(`🔴 Added breakpoint at ${filename}:${lineNumber}`);
+        }
+
+        // Update decorations
+        this.updateBreakpointDecorations(filename);
+    }
+
+    // Update breakpoint decorations in the editor
+    updateBreakpointDecorations(filename) {
+        if (!this.monacoEditor || this.activeTab !== filename) {
+            return;
+        }
+
+        const fileBreakpoints = this.breakpoints.get(filename) || new Set();
+        const decorations = [];
+
+        fileBreakpoints.forEach(lineNumber => {
+            decorations.push({
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: {
+                    isWholeLine: true,
+                    glyphMarginClassName: 'breakpoint-decoration',
+                    className: 'breakpoint-line',
+                    glyphMarginHoverMessage: { value: `Breakpoint at line ${lineNumber}` }
+                }
+            });
+        });
+
+        // Get old decorations and replace them
+        const oldDecorations = this.breakpointDecorations.get(filename) || [];
+        const newDecorations = this.monacoEditor.deltaDecorations(oldDecorations, decorations);
+        this.breakpointDecorations.set(filename, newDecorations);
+    }
+
+    // Get all breakpoints for a file
+    getBreakpoints(filename) {
+        return Array.from(this.breakpoints.get(filename) || []).sort((a, b) => a - b);
+    }
+
+    // Get all breakpoints across all files
+    getAllBreakpoints() {
+        const allBreakpoints = {};
+        this.breakpoints.forEach((lines, filename) => {
+            if (lines.size > 0) {
+                allBreakpoints[filename] = Array.from(lines).sort((a, b) => a - b);
+            }
+        });
+        return allBreakpoints;
+    }
+
+    // Clear all breakpoints for a file
+    clearBreakpoints(filename) {
+        if (this.breakpoints.has(filename)) {
+            this.breakpoints.get(filename).clear();
+            this.updateBreakpointDecorations(filename);
+            console.log(`🔴 Cleared all breakpoints in ${filename}`);
+        }
+    }
+
+    // Clear all breakpoints across all files
+    clearAllBreakpoints() {
+        this.breakpoints.forEach((_, filename) => {
+            this.breakpoints.get(filename).clear();
+            if (this.activeTab === filename) {
+                this.updateBreakpointDecorations(filename);
+            }
+        });
+        console.log('🔴 Cleared all breakpoints');
     }
 
     onEditorChange() {
