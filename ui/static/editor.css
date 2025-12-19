@@ -231,6 +231,18 @@ body {
   background: #3d8b40;
 }
 
+.toolbar-button-success:disabled {
+  background: #388e3c;
+  opacity: 0.8;
+  cursor: wait;
+}
+
+/* Spinner animation */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* IDE Container */
 .ide-container {
   display: flex;

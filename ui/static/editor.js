@@ -2022,6 +2022,30 @@ function generateHooksFromSelection() {
     }
 }
 
+// Show/hide progress indicator on Generate Hooks button
+function setGenerateHooksProgress(isLoading) {
+    const toolbar = document.getElementById('selectionToolbar');
+    const generateBtn = toolbar?.querySelector('.toolbar-button-success');
+
+    if (generateBtn) {
+        if (isLoading) {
+            generateBtn.disabled = true;
+            generateBtn.dataset.originalHtml = generateBtn.innerHTML;
+            generateBtn.innerHTML = `
+                <svg class="spinner" width="16" height="16" viewBox="0 0 16 16" style="animation: spin 1s linear infinite;">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="28" stroke-dashoffset="8"/>
+                </svg>
+                <span style="margin-left: 4px;">Generating...</span>
+            `;
+        } else {
+            generateBtn.disabled = false;
+            if (generateBtn.dataset.originalHtml) {
+                generateBtn.innerHTML = generateBtn.dataset.originalHtml;
+            }
+        }
+    }
+}
+
 // Select all items based on current context (toolbar button handler)
 function selectAllFromToolbar() {
     if (currentSelectionContext === 'functions' || document.querySelector('.function-checkbox')) {
@@ -2284,6 +2308,9 @@ async function generateHooksFromFunctions() {
 
     console.log('🔧 Generating hooks for', selectedItems.length, 'functions:', selectedItems.map(f => f.name));
 
+    // Show progress indicator
+    setGenerateHooksProgress(true);
+
     // Get unique function names (avoid duplicates)
     const functionNames = [...new Set(selectedItems.map(item => item.name))];
 
@@ -2361,6 +2388,9 @@ async function generateHooksFromFunctions() {
     } catch (error) {
         console.error('❌ Error creating hooks module:', error);
         alert('Error creating hooks module: ' + error.message);
+    } finally {
+        // Hide progress indicator
+        setGenerateHooksProgress(false);
     }
 }
 
@@ -2373,6 +2403,9 @@ async function generateHooksFile() {
     }
 
     console.log('🔧 Generating hooks for', selectedItems.length, 'functions:', selectedItems.map(n => n.name));
+
+    // Show progress indicator
+    setGenerateHooksProgress(true);
 
     // Get unique function names (avoid duplicates)
     const functionNames = [...new Set(selectedItems.map(item => item.name))];
@@ -2453,6 +2486,9 @@ async function generateHooksFile() {
     } catch (error) {
         console.error('❌ Error creating hooks module:', error);
         alert('Error creating hooks module: ' + error.message);
+    } finally {
+        // Hide progress indicator
+        setGenerateHooksProgress(false);
     }
 }
 
