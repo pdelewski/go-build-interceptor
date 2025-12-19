@@ -285,7 +285,26 @@ The project includes a web-based IDE (`ui/`) for interactive exploration and cod
 - Node.js and npm (for downloading Monaco Editor)
 - gopls (auto-installed if missing)
 
-**Setup:**
+**Quick Start (using Makefile):**
+
+```bash
+cd ui
+make setup    # Full setup: install deps, copy Monaco, build
+make run      # Run with ../hello project
+```
+
+**Available Make Targets:**
+
+| Target | Description |
+|--------|-------------|
+| `make setup` | Full setup (deps + monaco + build) |
+| `make build` | Build the UI server |
+| `make run` | Build and run with ../hello |
+| `make run-dir DIR=/path` | Run with custom project |
+| `make clean` | Remove build artifacts |
+| `make help` | Show all targets |
+
+**Manual Setup:**
 
 ```bash
 cd ui
@@ -381,6 +400,7 @@ go-build-interceptor/
 ├── ui/
 │   ├── web_main.go      # Web UI server with LSP proxy
 │   ├── go.mod           # UI module dependencies
+│   ├── Makefile         # Build automation
 │   └── static/
 │       ├── editor.js    # Monaco editor integration + LSP client
 │       ├── editor.css   # Editor styles
