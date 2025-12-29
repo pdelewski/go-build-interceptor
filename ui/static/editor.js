@@ -2620,12 +2620,12 @@ function generateHooksCode(functionNames, moduleName = '') {
     const hookDefinitions = functionNames.map(funcName => {
         const pascalName = toPascalCase(funcName);
         return `		{
-			Target: hooks.InjectTarget{
+			Target: InjectTarget{
 				Package:  "main",
 				Function: "${funcName}",
 				Receiver: "",
 			},
-			Hooks: &hooks.InjectFunctions{
+			Hooks: &InjectFunctions{
 				Before: "Before${pascalName}",
 				After:  "After${pascalName}",
 				From:   "${hooksModulePath}",
@@ -2652,96 +2652,76 @@ func After${pascalName}(ctx HookContext) {
 }`;
     }).join('\n\n');
 
-    // Build the complete hooks file with minimal HookContext interface
+    // Build the complete self-contained hooks file
+    // NOTE: This file is compiled standalone and linked via go:linkname.
+    // No external dependencies required - all types are defined locally.
     const code = `package generated_hooks
 
 import (
 	"fmt"
 	"time"
 	_ "unsafe" // Required for go:linkname
-
-	"github.com/pdelewski/go-build-interceptor/hooks"
 )
 
 // ============================================================================
-// Minimal HookContext Interface
+// Local Type Definitions (for standalone compilation)
 // ============================================================================
+// These types mirror the hooks package but are defined locally to avoid
+// external dependencies during compilation.
+
+// InjectTarget specifies which function to instrument
+type InjectTarget struct {
+	Package  string
+	Function string
+	Receiver string
+}
+
+// InjectFunctions specifies the hook functions to call
+type InjectFunctions struct {
+	Before string
+	After  string
+	From   string
+}
+
+// Hook defines a complete hook configuration
+type Hook struct {
+	Target InjectTarget
+	Hooks  *InjectFunctions
+}
 
 // HookContext provides a minimal interface for hook functions.
 // It allows passing data between Before and After hooks, and optionally
 // skipping the original function call.
 type HookContext interface {
-	// SetData stores arbitrary data to pass from Before to After hook
 	SetData(data interface{})
-	// GetData retrieves data stored by SetData
 	GetData() interface{}
-	// SetKeyData stores a key-value pair
 	SetKeyData(key string, val interface{})
-	// GetKeyData retrieves a value by key
 	GetKeyData(key string) interface{}
-	// HasKeyData checks if a key exists
 	HasKeyData(key string) bool
-	// SetSkipCall when true, skips the original function call
 	SetSkipCall(skip bool)
-	// IsSkipCall returns whether to skip the original call
 	IsSkipCall() bool
-	// GetFuncName returns the name of the hooked function
 	GetFuncName() string
-	// GetPackageName returns the package name of the hooked function
 	GetPackageName() string
 }
 
 // ============================================================================
-// Hook Provider (for go-build-interceptor)
+// Hook Provider (for go-build-interceptor parsing)
 // ============================================================================
 
-// GeneratedHookProvider implements the HookProvider interface
-type GeneratedHookProvider struct{}
-
 // ProvideHooks returns the hook definitions for the selected functions
-func (h *GeneratedHookProvider) ProvideHooks() []*hooks.Hook {
-	return []*hooks.Hook{
+func ProvideHooks() []*Hook {
+	return []*Hook{
 ${hookDefinitions}
 	}
 }
 
-// Ensure GeneratedHookProvider implements the HookProvider interface
-var _ hooks.HookProvider = (*GeneratedHookProvider)(nil)
-
 // ============================================================================
 // Hook Implementations
 // ============================================================================
+// These functions are called via go:linkname from the instrumented code.
+// The instrumented code generates trampoline functions that link to these.
 
 ${hookImplementations}
-
-// ============================================================================
-// go:linkname Usage (for reference)
-// ============================================================================
-//
-// When go-build-interceptor injects hooks into the target code, it should
-// generate go:linkname declarations to call these hooks. Example:
-//
-// In the TARGET package (e.g., main), the injected code would look like:
-//
-//     import _ "unsafe" // required for go:linkname
-//
-//     //go:linkname BeforeMyFunc generated_hooks.BeforeMyFunc
-//     func BeforeMyFunc(ctx HookContext)
-//
-//     //go:linkname AfterMyFunc generated_hooks.AfterMyFunc
-//     func AfterMyFunc(ctx HookContext)
-//
-//     func MyFunc() {
-//         ctx := &HookContextImpl{funcName: "MyFunc", packageName: "main"}
-//         BeforeMyFunc(ctx)
-//         if !ctx.IsSkipCall() {
-//             defer AfterMyFunc(ctx)
-//             // original function body...
-//         }
-//     }
-//
-// This allows the hooks to be defined in this separate module while being
-// called from the instrumented target code.
 `;
 
     return code;
