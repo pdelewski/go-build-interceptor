@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -773,7 +774,7 @@ func generateOtelRuntimeFile(targetDir string, hooksImportPath string) (string, 
 }
 
 // generateHooksCompileCommand generates a compile command for the generated_hooks package
-// Returns the compile command string and the output .a file path
+// Returns the compile commands (hooks lib + generated_hooks) and the output .a file path
 func generateHooksCompileCommand(commands []Command, hooksFile string, hooksImportPath string, workDir string) (string, string) {
 	// Find a sample compile command to extract the compiler path and common flags
 	var sampleCmd string
@@ -807,9 +808,17 @@ func generateHooksCompileCommand(commands []Command, hooksFile string, hooksImpo
 		return "", ""
 	}
 
-	// Create importcfg for hooks package
+	// Find the hooktypes library package (github.com/pdelewski/go-build-interceptor/hooktypes)
+	hooksLibDir, hooksLibPkgFile, err := compileHooksLibrary(compilerPath, workDir, commands)
+	if err != nil {
+		fmt.Printf("           ⚠️  Failed to compile hooktypes library: %v\n", err)
+		return "", ""
+	}
+	_ = hooksLibDir // suppress unused variable warning
+
+	// Create importcfg for hooks package (including the hooks library)
 	importcfgPath := filepath.Join(hooksBuildDir, "importcfg")
-	if err := createHooksImportcfg(importcfgPath, commands, workDir); err != nil {
+	if err := createHooksImportcfg(importcfgPath, commands, workDir, hooksLibPkgFile); err != nil {
 		fmt.Printf("           ⚠️  Failed to create hooks importcfg: %v\n", err)
 		return "", ""
 	}
@@ -841,8 +850,137 @@ func generateHooksCompileCommand(commands []Command, hooksFile string, hooksImpo
 	return sb.String(), outputFile
 }
 
-// createHooksImportcfg creates an importcfg file for the hooks package
-func createHooksImportcfg(path string, commands []Command, workDir string) error {
+// compileHooksLibrary compiles the github.com/pdelewski/go-build-interceptor/hooktypes package
+func compileHooksLibrary(compilerPath string, workDir string, commands []Command) (string, string, error) {
+	// Find the hooktypes library directory
+	// First try using the executable path to find the module
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get executable path: %w", err)
+	}
+	moduleDir := filepath.Dir(execPath)
+	hooksLibDir := filepath.Join(moduleDir, "hooktypes")
+
+	// Check if the hooktypes directory exists
+	if _, err := os.Stat(hooksLibDir); os.IsNotExist(err) {
+		// Try go list as fallback (run from the module directory if possible)
+		cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/pdelewski/go-build-interceptor")
+		cmd.Dir = moduleDir // Run from the module directory
+		output, err := cmd.Output()
+		if err != nil {
+			// Last resort: look in parent directories
+			for dir := moduleDir; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+				testPath := filepath.Join(dir, "hooktypes")
+				if _, err := os.Stat(testPath); err == nil {
+					hooksLibDir = testPath
+					break
+				}
+			}
+			// Check if we found it
+			if _, err := os.Stat(hooksLibDir); os.IsNotExist(err) {
+				return "", "", fmt.Errorf("hooktypes library not found (tried %s)", hooksLibDir)
+			}
+		} else {
+			moduleDir = strings.TrimSpace(string(output))
+			hooksLibDir = filepath.Join(moduleDir, "hooktypes")
+		}
+	}
+
+	// Get all .go files in the hooktypes directory
+	goFiles, err := filepath.Glob(filepath.Join(hooksLibDir, "*.go"))
+	if err != nil || len(goFiles) == 0 {
+		return "", "", fmt.Errorf("no .go files found in hooktypes library: %s", hooksLibDir)
+	}
+
+	// Filter out test files
+	var sourceFiles []string
+	for _, f := range goFiles {
+		if !strings.HasSuffix(f, "_test.go") {
+			sourceFiles = append(sourceFiles, f)
+		}
+	}
+
+	// Create output directory
+	hooksLibBuildDir := filepath.Join(workDir, "hooktypes_lib")
+	if err := os.MkdirAll(hooksLibBuildDir, 0755); err != nil {
+		return "", "", fmt.Errorf("failed to create hooktypes lib build dir: %w", err)
+	}
+
+	// Create importcfg for hooktypes library (no dependencies needed - it's self-contained)
+	importcfgPath := filepath.Join(hooksLibBuildDir, "importcfg")
+	// hooktypes has no imports, so just create an empty importcfg
+	if err := os.WriteFile(importcfgPath, []byte("# import config\n"), 0644); err != nil {
+		return "", "", fmt.Errorf("failed to create hooktypes lib importcfg: %w", err)
+	}
+
+	// Output file path
+	outputFile := filepath.Join(hooksLibBuildDir, "_pkg_.a")
+
+	// Build the compile command
+	var sb strings.Builder
+	sb.WriteString(compilerPath)
+	sb.WriteString(" -o ")
+	sb.WriteString(outputFile)
+	sb.WriteString(" -p github.com/pdelewski/go-build-interceptor/hooktypes")
+	sb.WriteString(" -importcfg ")
+	sb.WriteString(importcfgPath)
+	sb.WriteString(" -pack")
+
+	for _, f := range sourceFiles {
+		sb.WriteString(" ")
+		sb.WriteString(f)
+	}
+
+	// Execute the compile command
+	compileCmd := sb.String()
+	fmt.Printf("           📦 Compiling hooktypes library...\n")
+	execCmd := exec.Command("bash", "-c", compileCmd)
+	execCmd.Dir = hooksLibDir
+	if output, err := execCmd.CombinedOutput(); err != nil {
+		return "", "", fmt.Errorf("failed to compile hooktypes library: %w\nOutput: %s", err, string(output))
+	}
+
+	return hooksLibDir, outputFile, nil
+}
+
+// createMinimalImportcfg creates an importcfg with minimal dependencies
+func createMinimalImportcfg(path string, commands []Command, workDir string) error {
+	// Find commonly used packages from existing compile commands
+	packagePaths := make(map[string]string)
+
+	for _, cmd := range commands {
+		if !isCompileCommand(&cmd) {
+			continue
+		}
+
+		parts := strings.Fields(cmd.Raw)
+		var outputFile, pkgName string
+		for i := 0; i < len(parts)-1; i++ {
+			if parts[i] == "-o" {
+				outputFile = parts[i+1]
+				outputFile = strings.ReplaceAll(outputFile, "$WORK", workDir)
+			}
+			if parts[i] == "-p" {
+				pkgName = parts[i+1]
+			}
+		}
+
+		if outputFile != "" && pkgName != "" {
+			packagePaths[pkgName] = outputFile
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# import config\n")
+	for pkgName, pkgPath := range packagePaths {
+		sb.WriteString(fmt.Sprintf("packagefile %s=%s\n", pkgName, pkgPath))
+	}
+
+	return os.WriteFile(path, []byte(sb.String()), 0644)
+}
+
+// createHooksImportcfg creates an importcfg file for the generated_hooks package
+func createHooksImportcfg(path string, commands []Command, workDir string, hooksLibPkgFile string) error {
 	// Find commonly used packages from existing compile commands
 	packagePaths := make(map[string]string)
 
@@ -873,6 +1011,11 @@ func createHooksImportcfg(path string, commands []Command, workDir string) error
 	// Write importcfg
 	var sb strings.Builder
 	sb.WriteString("# import config\n")
+
+	// Add the hooktypes library package
+	if hooksLibPkgFile != "" {
+		sb.WriteString(fmt.Sprintf("packagefile github.com/pdelewski/go-build-interceptor/hooktypes=%s\n", hooksLibPkgFile))
+	}
 
 	// Add all packages (the hooks package may need various dependencies)
 	for pkgName, pkgPath := range packagePaths {
@@ -984,13 +1127,16 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 			// Check if this heredoc creates the main package's importcfg (compile or link)
 			if strings.Contains(modifiedCommand, "/"+mainBuildID+"/importcfg") &&
 				strings.Contains(modifiedCommand, "<< 'EOF'") {
-				// Inject the hooks package before EOF
+				// Inject the hooks packages before EOF
 				hooksPackageLine := fmt.Sprintf("packagefile %s=%s", hooksImportPath, hooksPkgFile)
+				hooktypesLibPkgFile := filepath.Join(workDir, "hooktypes_lib", "_pkg_.a")
+				hooktypesLibPackageLine := fmt.Sprintf("packagefile github.com/pdelewski/go-build-interceptor/hooktypes=%s", hooktypesLibPkgFile)
+
 				// Check if this is the link importcfg or compile importcfg
 				if strings.Contains(modifiedCommand, "importcfg.link") {
-					// For link, insert after the main package line
-					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\nEOF\n", 1)
-					fmt.Printf("           📎 Added hooks package to main importcfg.link heredoc\n")
+					// For link, add both generated_hooks and hooktypes library
+					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\n"+hooktypesLibPackageLine+"\nEOF\n", 1)
+					fmt.Printf("           📎 Added packages to main importcfg.link heredoc\n")
 				} else {
 					// For compile, insert before EOF
 					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\nEOF\n", 1)

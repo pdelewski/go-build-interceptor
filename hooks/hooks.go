@@ -5,29 +5,22 @@ import (
 	"fmt"
 	"go/ast"
 	"time"
+
+	"github.com/pdelewski/go-build-interceptor/hooktypes"
 )
 
 // FunctionRewriteHook allows complete rewriting of a function's AST
 type FunctionRewriteHook func(originalNode ast.Node) (ast.Node, error)
 
-// Core hook definition
+// Hook extends hooktypes.Hook with advanced rewrite capability
 type Hook struct {
-	Target  InjectTarget
-	Hooks   *InjectFunctions    // Optional: for before/after hooks
+	hooktypes.Hook
 	Rewrite FunctionRewriteHook // Optional: for rewriting entire function
 }
 
-type InjectTarget struct {
-	Package  string
-	Function string
-	Receiver string
-}
-
-type InjectFunctions struct {
-	Before string
-	After  string
-	From   string
-}
+// Re-export lightweight types for convenience
+type InjectTarget = hooktypes.InjectTarget
+type InjectFunctions = hooktypes.InjectFunctions
 
 // Framework-provided context for hook functions
 type HookContext struct {
