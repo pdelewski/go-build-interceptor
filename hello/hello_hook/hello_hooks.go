@@ -65,12 +65,12 @@ func (h *HelloHookProvider) ProvideHooks() []*hooks.Hook {
 }
 
 // Hook implementations for foo function
-func BeforeFoo(ctx *hooks.HookContext) error {
+func BeforeFoo(ctx *hooks.RuntimeHookContext) error {
 	fmt.Printf("[%s] Starting foo()\n", ctx.Function)
 	return nil
 }
 
-func AfterFoo(ctx *hooks.HookContext) error {
+func AfterFoo(ctx *hooks.RuntimeHookContext) error {
 	fmt.Printf("[%s] Completed foo() in %v\n", ctx.Function, ctx.Duration)
 	return nil
 }
@@ -191,23 +191,23 @@ func RewriteBar2(originalNode ast.Node) (ast.Node, error) {
 }
 
 // BeforeBar2 hook implementation
-func BeforeBar2(ctx *hooks.HookContext) error {
+func BeforeBar2(ctx *hooks.RuntimeHookContext) error {
 	fmt.Printf("[%s] Starting bar2()\n", ctx.Function)
 	return nil
 }
 
-func AfterBar2(ctx *hooks.HookContext) error {
+func AfterBar2(ctx *hooks.RuntimeHookContext) error {
 	fmt.Printf("[%s] Completed bar2() in %v\n", ctx.Function, ctx.Duration)
 	return nil
 }
 
 // Hook implementations for main function
-func BeforeMain(ctx *hooks.HookContext) error {
+func BeforeMain(ctx *hooks.RuntimeHookContext) error {
 	fmt.Printf("[%s] Starting main()\n", ctx.Function)
 	return nil
 }
 
-func AfterMain(ctx *hooks.HookContext) error {
+func AfterMain(ctx *hooks.RuntimeHookContext) error {
 	fmt.Printf("[%s] Completed main() in %v\n", ctx.Function, ctx.Duration)
 	if ctx.Error != nil {
 		fmt.Printf("Main function failed: %v\n", ctx.Error)

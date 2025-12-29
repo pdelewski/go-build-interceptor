@@ -7,17 +7,13 @@ import (
 	"time"
 )
 
-// FunctionRewriteHook allows complete rewriting of a function's AST
+// FunctionRewriteHook allows complete rewriting of a function's AST.
+// Use this type when assigning to Hook.Rewrite field.
 type FunctionRewriteHook func(originalNode ast.Node) (ast.Node, error)
 
-// AdvancedHook extends Hook with rewrite capability
-type AdvancedHook struct {
-	Hook
-	Rewrite FunctionRewriteHook // Optional: for rewriting entire function
-}
-
-// Framework-provided context for hook functions
-type HookContext struct {
+// RuntimeHookContext provides a full-featured context for hook functions.
+// This is used by advanced hooks that need access to timing, results, and context.
+type RuntimeHookContext struct {
 	// Target information
 	Package  string
 	Function string
@@ -36,9 +32,9 @@ type HookContext struct {
 	Ctx context.Context
 }
 
-// Function signature stubs that all hook implementations must follow
-type BeforeHook func(hookCtx *HookContext) error
-type AfterHook func(hookCtx *HookContext) error
+// Function signature stubs for advanced hook implementations
+type BeforeHook func(hookCtx *RuntimeHookContext) error
+type AfterHook func(hookCtx *RuntimeHookContext) error
 
 // HookProvider interface that users must implement to provide their hooks
 type HookProvider interface {
@@ -55,17 +51,19 @@ func (h *Hook) Validate() error {
 	}
 	// Receiver can be empty for package-level functions
 
-	// Must have Hooks specified
-	if h.Hooks == nil {
-		return fmt.Errorf("Hooks must be specified")
+	// Must have either Hooks or Rewrite specified
+	if h.Hooks == nil && h.Rewrite == nil {
+		return fmt.Errorf("either Hooks or Rewrite must be specified")
 	}
 
 	// If Hooks is specified, validate it
-	if h.Hooks.Before == "" && h.Hooks.After == "" {
-		return fmt.Errorf("at least one of Before or After hook must be specified")
-	}
-	if h.Hooks.From == "" {
-		return fmt.Errorf("hook package path is required when using Hooks")
+	if h.Hooks != nil {
+		if h.Hooks.Before == "" && h.Hooks.After == "" {
+			return fmt.Errorf("at least one of Before or After hook must be specified")
+		}
+		if h.Hooks.From == "" {
+			return fmt.Errorf("hook package path is required when using Hooks")
+		}
 	}
 
 	return nil

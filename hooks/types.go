@@ -4,8 +4,9 @@ package hooks
 
 // Hook defines a hook with its target function and hook implementations
 type Hook struct {
-	Target InjectTarget
-	Hooks  *InjectFunctions // Optional: for before/after hooks
+	Target  InjectTarget
+	Hooks   *InjectFunctions // Optional: for before/after hooks
+	Rewrite interface{}      // Optional: FunctionRewriteHook for rewriting entire function
 }
 
 // InjectTarget specifies the target function to instrument
