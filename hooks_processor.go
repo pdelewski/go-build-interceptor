@@ -1,12 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +18,86 @@ type HookDefinition struct {
 	Function string
 	Receiver string
 	Type     string // "before_after", "rewrite", or "both"
+}
+
+// getHooksImportPath determines the full Go import path for a hooks file
+// by finding the nearest go.mod and calculating the relative path
+func getHooksImportPath(hooksFile string) (string, error) {
+	absPath, err := filepath.Abs(hooksFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Get the directory containing the hooks file
+	hooksDir := filepath.Dir(absPath)
+
+	// Find the go.mod file by walking up the directory tree
+	modPath, modDir, err := findGoMod(hooksDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to find go.mod: %w", err)
+	}
+
+	// Extract the module path from go.mod
+	modulePath, err := extractModulePath(modPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to extract module path: %w", err)
+	}
+
+	// Calculate the relative path from module root to hooks directory
+	relPath, err := filepath.Rel(modDir, hooksDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to calculate relative path: %w", err)
+	}
+
+	// Combine module path with relative path (use forward slashes for import paths)
+	if relPath == "." {
+		return modulePath, nil
+	}
+	importPath := modulePath + "/" + filepath.ToSlash(relPath)
+	return importPath, nil
+}
+
+// findGoMod walks up the directory tree to find go.mod
+func findGoMod(startDir string) (modPath string, modDir string, err error) {
+	dir := startDir
+	for {
+		modPath = filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(modPath); err == nil {
+			return modPath, dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached root without finding go.mod
+			return "", "", fmt.Errorf("go.mod not found")
+		}
+		dir = parent
+	}
+}
+
+// extractModulePath extracts the module path from a go.mod file
+func extractModulePath(modPath string) (string, error) {
+	file, err := os.Open(modPath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "module ") {
+			modulePath := strings.TrimPrefix(line, "module ")
+			modulePath = strings.TrimSpace(modulePath)
+			return modulePath, nil
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	return "", fmt.Errorf("module declaration not found in go.mod")
 }
 
 // parseHooksFile parses a Go file containing hook definitions and extracts hook information
@@ -191,6 +271,16 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 		return fmt.Errorf("error parsing hooks file: %w", err)
 	}
 
+	// Get the full import path for the hooks package
+	hooksImportPath, err := getHooksImportPath(hooksFile)
+	if err != nil {
+		fmt.Printf("⚠️  Warning: Could not determine hooks import path: %v\n", err)
+		fmt.Printf("   Using package name only for go:linkname (may not work)\n")
+		hooksImportPath = "generated_hooks" // Fallback
+	} else {
+		fmt.Printf("Hooks import path: %s\n", hooksImportPath)
+	}
+
 	fmt.Printf("=== Compile Mode with Hooks ===\n")
 	fmt.Printf("Loaded %d hook definitions from %s\n\n", len(hooks), filepath.Base(hooksFile))
 
@@ -216,9 +306,10 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 	compileCount := 0
 	matchCount := 0
-	packagesWithMatches := make(map[string]bool) // Track packages that have matches
-	copiedFiles := make(map[string]bool)         // Track files already copied per package
-	fileReplacements := make(map[string]string)  // Track original file -> instrumented file mapping
+	packagesWithMatches := make(map[string]bool)   // Track packages that have matches
+	copiedFiles := make(map[string]bool)           // Track files already copied per package
+	fileReplacements := make(map[string]string)    // Track original file -> instrumented file mapping
+	trampolineFiles := make(map[string]string)     // Track package -> trampolines file path
 
 	// Process each compile command
 	for cmdIdx, cmd := range commands {
@@ -282,7 +373,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 				if !copiedFiles[copyKey] {
 					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
 						instrumentedFilePath := filepath.Join(workDir, pkgInfo.BuildID, "src", filepath.Base(file))
-						if err := copyAndInstrumentFileOnly(file, workDir, pkgInfo.BuildID, packageName, hooks); err != nil {
+						if err := copyAndInstrumentFileOnly(file, workDir, pkgInfo.BuildID, packageName, hooks, hooksImportPath); err != nil {
 							fmt.Printf("           ⚠️  Failed to copy and instrument file: %v\n", err)
 						} else {
 							copiedFiles[copyKey] = true
@@ -290,6 +381,10 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 							if strings.HasSuffix(file, ".go") {
 								fileReplacements[file] = instrumentedFilePath
 								fmt.Printf("           🔄 Will replace %s with %s in compile command\n", file, instrumentedFilePath)
+
+								// Track the trampolines file for this package
+								trampolinesPath := filepath.Join(workDir, pkgInfo.BuildID, "src", "otel_trampolines.go")
+								trampolineFiles[packageName] = trampolinesPath
 							}
 						}
 					}
@@ -319,7 +414,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 	// Generate modified build log with updated file paths
 	if len(fileReplacements) > 0 {
-		if err := generateModifiedBuildLog(commands, fileReplacements); err != nil {
+		if err := generateModifiedBuildLog(commands, fileReplacements, trampolineFiles); err != nil {
 			fmt.Printf("⚠️  Failed to generate modified build log: %v\n", err)
 		} else {
 			fmt.Printf("\n📄 Generated modified build log: go-build-modified.log\n")
@@ -337,78 +432,6 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 	return nil
 }
 
-// copyAndInstrumentFile copies and instruments a source file to the work directory for a package
-func copyAndInstrumentFile(sourceFile string, workDir string, buildID string, packageName string, hooks []HookDefinition) error {
-	if workDir == "" || buildID == "" {
-		return fmt.Errorf("missing work directory or build ID")
-	}
-
-	// Create the target directory: $WORK/buildID/src/
-	targetDir := filepath.Join(workDir, buildID, "src")
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
-	}
-
-	// Determine target file path
-	sourceBaseName := filepath.Base(sourceFile)
-	targetFile := filepath.Join(targetDir, sourceBaseName)
-
-	// Instrument the file instead of just copying
-	if err := instrumentFile(sourceFile, targetFile, packageName, hooks); err != nil {
-		return fmt.Errorf("failed to instrument file: %w", err)
-	}
-
-	fmt.Printf("           📄 Copied and instrumented %s to %s\n", sourceBaseName, targetFile)
-
-	// Replace the original source file with the instrumented version
-	if err := replaceOriginalWithInstrumented(sourceFile, targetFile); err != nil {
-		fmt.Printf("           ⚠️  Failed to replace original file: %v\n", err)
-	} else {
-		fmt.Printf("           🔄 Replaced original %s with instrumented version\n", sourceBaseName)
-	}
-
-	return nil
-}
-
-// copyFileToWorkDir copies a source file to the work directory for a package
-func copyFileToWorkDir(sourceFile string, workDir string, buildID string) error {
-	if workDir == "" || buildID == "" {
-		return fmt.Errorf("missing work directory or build ID")
-	}
-
-	// Create the target directory: $WORK/buildID/src/
-	targetDir := filepath.Join(workDir, buildID, "src")
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
-	}
-
-	// Copy the source file to the target directory
-	sourceBaseName := filepath.Base(sourceFile)
-	targetFile := filepath.Join(targetDir, sourceBaseName)
-
-	// Open source file
-	src, err := os.Open(sourceFile)
-	if err != nil {
-		return fmt.Errorf("failed to open source file %s: %w", sourceFile, err)
-	}
-	defer src.Close()
-
-	// Create target file
-	dst, err := os.Create(targetFile)
-	if err != nil {
-		return fmt.Errorf("failed to create target file %s: %w", targetFile, err)
-	}
-	defer dst.Close()
-
-	// Copy content
-	if _, err := io.Copy(dst, src); err != nil {
-		return fmt.Errorf("failed to copy file content: %w", err)
-	}
-
-	fmt.Printf("           📄 Copied %s to %s\n", sourceBaseName, targetFile)
-	return nil
-}
-
 // extractWorkDirFromCommands extracts the work directory from commands
 func extractWorkDirFromCommands(commands []Command) string {
 	for _, cmd := range commands {
@@ -420,13 +443,16 @@ func extractWorkDirFromCommands(commands []Command) string {
 }
 
 // instrumentFile instruments a Go file with trampoline functions and calls
-func instrumentFile(sourceFile, targetFile string, packageName string, hooks []HookDefinition) error {
+func instrumentFile(sourceFile, targetFile string, packageName string, hooks []HookDefinition, hooksImportPath string) error {
 	// Parse the source file
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, sourceFile, nil, parser.ParseComments)
 	if err != nil {
 		return fmt.Errorf("failed to parse source file %s: %w", sourceFile, err)
 	}
+
+	// Get the actual package name from the AST
+	actualPackageName := node.Name.Name
 
 	// Track which hooks apply to functions in this file
 	var applicableHooks []HookDefinition
@@ -460,11 +486,6 @@ func instrumentFile(sourceFile, targetFile string, packageName string, hooks []H
 		}
 	}
 
-	// Add trampoline function definitions if we have applicable hooks
-	if len(applicableHooks) > 0 {
-		addTrampolineFunctions(node, applicableHooks)
-	}
-
 	// Write the instrumented file
 	file, err := os.Create(targetFile)
 	if err != nil {
@@ -476,6 +497,16 @@ func instrumentFile(sourceFile, targetFile string, packageName string, hooks []H
 		return fmt.Errorf("failed to format and write instrumented file: %w", err)
 	}
 
+	// Generate separate trampolines file if we have applicable hooks
+	if len(applicableHooks) > 0 {
+		targetDir := filepath.Dir(targetFile)
+		trampolinesFile := filepath.Join(targetDir, "otel_trampolines.go")
+		if err := generateTrampolinesFile(trampolinesFile, actualPackageName, applicableHooks, hooksImportPath); err != nil {
+			return fmt.Errorf("failed to generate trampolines file: %w", err)
+		}
+		fmt.Printf("           📄 Generated trampolines file: %s\n", trampolinesFile)
+	}
+
 	if len(instrumentedFunctions) > 0 {
 		fmt.Printf("           🔧 Instrumented functions: %s\n", strings.Join(instrumentedFunctions, ", "))
 	}
@@ -483,127 +514,208 @@ func instrumentFile(sourceFile, targetFile string, packageName string, hooks []H
 	return nil
 }
 
-// addTrampolineFunctions adds empty trampoline function definitions to the AST
-func addTrampolineFunctions(node *ast.File, hooks []HookDefinition) {
-	// Track which trampoline functions have already been added
-	existingTrampolines := make(map[string]bool)
+// generateTrampolinesFile creates a separate file with trampoline functions and go:linkname declarations
+func generateTrampolinesFile(targetFile string, packageName string, hooks []HookDefinition, hooksImportPath string) error {
+	var sb strings.Builder
 
-	// Check for existing trampoline functions
-	for _, decl := range node.Decls {
-		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
-			if strings.HasPrefix(funcDecl.Name.Name, "trampoline_") {
-				existingTrampolines[funcDecl.Name.Name] = true
-			}
-		}
-	}
+	// Write package declaration
+	sb.WriteString(fmt.Sprintf("package %s\n\n", packageName))
 
+	// Write imports
+	sb.WriteString("import _ \"unsafe\" // Required for go:linkname\n\n")
+
+	fmt.Printf("           🔗 Using hooks import path for go:linkname: %s\n", hooksImportPath)
+
+	// Write HookContext interface (only once)
+	sb.WriteString(`// HookContext provides a minimal interface for hook functions
+type HookContext interface {
+	SetData(data interface{})
+	GetData() interface{}
+	SetKeyData(key string, val interface{})
+	GetKeyData(key string) interface{}
+	HasKeyData(key string) bool
+	SetSkipCall(skip bool)
+	IsSkipCall() bool
+	GetFuncName() string
+	GetPackageName() string
+}
+
+`)
+
+	// Generate trampolines for each hook
 	for _, hook := range hooks {
-		if hook.Type == "before_after" || hook.Type == "both" {
-			beforeFuncName := "trampoline_Before" + capitalizeFirst(hook.Function)
-			afterFuncName := "trampoline_After" + capitalizeFirst(hook.Function)
+		pascalName := capitalizeFirst(hook.Function)
 
-			// Only add if not already present
-			if !existingTrampolines[beforeFuncName] {
-				// Create trampoline_BeforeXXX function
-				beforeFunc := &ast.FuncDecl{
-					Name: ast.NewIdent(beforeFuncName),
-					Type: &ast.FuncType{
-						Params:  &ast.FieldList{},
-						Results: nil,
-					},
-					Body: &ast.BlockStmt{
-						List: []ast.Stmt{
-							&ast.ExprStmt{
-								X: &ast.CallExpr{
-									Fun: &ast.SelectorExpr{
-										X:   ast.NewIdent("fmt"),
-										Sel: ast.NewIdent("Println"),
-									},
-									Args: []ast.Expr{
-										&ast.BasicLit{
-											Kind:  token.STRING,
-											Value: fmt.Sprintf("\"[TRAMPOLINE] Before %s\"", hook.Function),
-										},
-									},
-								},
-							},
-						},
-					},
-				}
-				node.Decls = append(node.Decls, beforeFunc)
-				existingTrampolines[beforeFuncName] = true
-			}
+		// HookContextImpl struct
+		sb.WriteString(fmt.Sprintf(`// HookContextImpl%s implements HookContext for %s
+type HookContextImpl%s struct {
+	data        interface{}
+	skipCall    bool
+	funcName    string
+	packageName string
+}
 
-			// Only add if not already present
-			if !existingTrampolines[afterFuncName] {
-				// Create trampoline_AfterXXX function
-				afterFunc := &ast.FuncDecl{
-					Name: ast.NewIdent(afterFuncName),
-					Type: &ast.FuncType{
-						Params:  &ast.FieldList{},
-						Results: nil,
-					},
-					Body: &ast.BlockStmt{
-						List: []ast.Stmt{
-							&ast.ExprStmt{
-								X: &ast.CallExpr{
-									Fun: &ast.SelectorExpr{
-										X:   ast.NewIdent("fmt"),
-										Sel: ast.NewIdent("Println"),
-									},
-									Args: []ast.Expr{
-										&ast.BasicLit{
-											Kind:  token.STRING,
-											Value: fmt.Sprintf("\"[TRAMPOLINE] After %s\"", hook.Function),
-										},
-									},
-								},
-							},
-						},
-					},
-				}
-				node.Decls = append(node.Decls, afterFunc)
-				existingTrampolines[afterFuncName] = true
-			}
-		}
+func (c *HookContextImpl%s) SetData(data interface{}) { c.data = data }
+func (c *HookContextImpl%s) GetData() interface{}     { return c.data }
+func (c *HookContextImpl%s) SetSkipCall(skip bool)    { c.skipCall = skip }
+func (c *HookContextImpl%s) IsSkipCall() bool         { return c.skipCall }
+func (c *HookContextImpl%s) GetFuncName() string      { return c.funcName }
+func (c *HookContextImpl%s) GetPackageName() string   { return c.packageName }
+
+func (c *HookContextImpl%s) GetKeyData(key string) interface{} {
+	if c.data == nil {
+		return nil
+	}
+	if m, ok := c.data.(map[string]interface{}); ok {
+		return m[key]
+	}
+	return nil
+}
+
+func (c *HookContextImpl%s) SetKeyData(key string, val interface{}) {
+	if c.data == nil {
+		c.data = make(map[string]interface{})
+	}
+	if m, ok := c.data.(map[string]interface{}); ok {
+		m[key] = val
 	}
 }
 
+func (c *HookContextImpl%s) HasKeyData(key string) bool {
+	if c.data == nil {
+		return false
+	}
+	if m, ok := c.data.(map[string]interface{}); ok {
+		_, ok := m[key]
+		return ok
+	}
+	return false
+}
+
+`, pascalName, hook.Function,
+			pascalName,
+			pascalName, pascalName, pascalName, pascalName, pascalName, pascalName,
+			pascalName, pascalName, pascalName))
+
+		// Before trampoline
+		sb.WriteString(fmt.Sprintf(`// OtelBeforeTrampoline_%s is the before trampoline for %s
+func OtelBeforeTrampoline_%s() (hookContext *HookContextImpl%s, skipCall bool) {
+	defer func() {
+		if err := recover(); err != nil {
+			println("failed to exec Before hook", "Before%s")
+		}
+	}()
+	hookContext = &HookContextImpl%s{}
+	hookContext.funcName = "%s"
+	hookContext.packageName = "%s"
+	if Before%s != nil {
+		Before%s(hookContext)
+	}
+	return hookContext, hookContext.skipCall
+}
+
+`, pascalName, hook.Function,
+			pascalName, pascalName,
+			pascalName,
+			pascalName,
+			hook.Function, hook.Package,
+			pascalName, pascalName))
+
+		// After trampoline
+		sb.WriteString(fmt.Sprintf(`// OtelAfterTrampoline_%s is the after trampoline for %s
+func OtelAfterTrampoline_%s(hookContext HookContext) {
+	defer func() {
+		if err := recover(); err != nil {
+			println("failed to exec After hook", "After%s")
+		}
+	}()
+	if After%s != nil {
+		After%s(hookContext)
+	}
+}
+
+`, pascalName, hook.Function,
+			pascalName,
+			pascalName,
+			pascalName, pascalName))
+
+		// go:linkname declarations (note: no space between // and go)
+		// Use full import path for go:linkname to link to the hooks package
+		sb.WriteString(fmt.Sprintf("//go:linkname Before%s %s.Before%s\n", pascalName, hooksImportPath, pascalName))
+		sb.WriteString(fmt.Sprintf("var Before%s func(ctx HookContext)\n\n", pascalName))
+		sb.WriteString(fmt.Sprintf("//go:linkname After%s %s.After%s\n", pascalName, hooksImportPath, pascalName))
+		sb.WriteString(fmt.Sprintf("var After%s func(ctx HookContext)\n\n", pascalName))
+	}
+
+	// Write to file
+	return os.WriteFile(targetFile, []byte(sb.String()), 0644)
+}
+
 // instrumentFunction adds trampoline calls to the beginning and end of a function
+// Uses the pattern: if hookContext, _ := OtelBeforeTrampoline_XXX(); false { } else { defer OtelAfterTrampoline_XXX(hookContext) }
 func instrumentFunction(funcDecl *ast.FuncDecl, hook *HookDefinition) {
 	if funcDecl.Body == nil {
 		return
 	}
 
+	pascalName := capitalizeFirst(hook.Function)
+	beforeTrampolineName := "OtelBeforeTrampoline_" + pascalName
+	afterTrampolineName := "OtelAfterTrampoline_" + pascalName
+
 	// Check if function is already instrumented by looking for existing trampoline calls
-	trampolineName := "trampoline_Before" + capitalizeFirst(hook.Function)
 	for _, stmt := range funcDecl.Body.List {
-		if exprStmt, ok := stmt.(*ast.ExprStmt); ok {
-			if callExpr, ok := exprStmt.X.(*ast.CallExpr); ok {
-				if ident, ok := callExpr.Fun.(*ast.Ident); ok && ident.Name == trampolineName {
-					// Already instrumented, skip
-					return
+		if ifStmt, ok := stmt.(*ast.IfStmt); ok {
+			if assignStmt, ok := ifStmt.Init.(*ast.AssignStmt); ok {
+				if callExpr, ok := assignStmt.Rhs[0].(*ast.CallExpr); ok {
+					if ident, ok := callExpr.Fun.(*ast.Ident); ok && ident.Name == beforeTrampolineName {
+						// Already instrumented, skip
+						return
+					}
 				}
 			}
 		}
 	}
 
-	// Create before call
-	beforeCall := &ast.ExprStmt{
-		X: &ast.CallExpr{
-			Fun: ast.NewIdent("trampoline_Before" + capitalizeFirst(hook.Function)),
-		},
-	}
+	// Create the instrumentation pattern:
+	// if hookContext, _ := OtelBeforeTrampoline_XXX(); false {
+	// } else {
+	//     defer OtelAfterTrampoline_XXX(hookContext)
+	// }
 
-	// Create after call (using defer to ensure it runs even if function panics)
-	afterCall := &ast.DeferStmt{
-		Call: &ast.CallExpr{
-			Fun: ast.NewIdent("trampoline_After" + capitalizeFirst(hook.Function)),
+	// The if statement with init
+	instrumentStmt := &ast.IfStmt{
+		Init: &ast.AssignStmt{
+			Lhs: []ast.Expr{
+				ast.NewIdent("hookContext" + pascalName),
+				ast.NewIdent("_"),
+			},
+			Tok: token.DEFINE,
+			Rhs: []ast.Expr{
+				&ast.CallExpr{
+					Fun: ast.NewIdent(beforeTrampolineName),
+				},
+			},
+		},
+		Cond: ast.NewIdent("false"),
+		Body: &ast.BlockStmt{
+			List: []ast.Stmt{}, // Empty block for the "if false" branch
+		},
+		Else: &ast.BlockStmt{
+			List: []ast.Stmt{
+				&ast.DeferStmt{
+					Call: &ast.CallExpr{
+						Fun: ast.NewIdent(afterTrampolineName),
+						Args: []ast.Expr{
+							ast.NewIdent("hookContext" + pascalName),
+						},
+					},
+				},
+			},
 		},
 	}
 
 	// Insert at the beginning of the function
-	newBody := []ast.Stmt{beforeCall, afterCall}
+	newBody := []ast.Stmt{instrumentStmt}
 	newBody = append(newBody, funcDecl.Body.List...)
 	funcDecl.Body.List = newBody
 }
@@ -616,44 +728,8 @@ func capitalizeFirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// replaceOriginalWithInstrumented replaces the original source file with the instrumented version
-func replaceOriginalWithInstrumented(originalFile, instrumentedFile string) error {
-	// First, backup the original file
-	backupFile := originalFile + ".backup"
-	if err := copyFile(originalFile, backupFile); err != nil {
-		return fmt.Errorf("failed to backup original file: %w", err)
-	}
-
-	// Replace the original with the instrumented version
-	if err := copyFile(instrumentedFile, originalFile); err != nil {
-		// If replacement fails, restore from backup
-		copyFile(backupFile, originalFile)
-		return fmt.Errorf("failed to replace original file: %w", err)
-	}
-
-	return nil
-}
-
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) error {
-	source, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-
-	destination, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destination.Close()
-
-	_, err = io.Copy(destination, source)
-	return err
-}
-
 // copyAndInstrumentFileOnly copies and instruments a source file without replacing the original
-func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string, packageName string, hooks []HookDefinition) error {
+func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string, packageName string, hooks []HookDefinition, hooksImportPath string) error {
 	if workDir == "" || buildID == "" {
 		return fmt.Errorf("missing work directory or build ID")
 	}
@@ -669,7 +745,7 @@ func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string
 	targetFile := filepath.Join(targetDir, sourceBaseName)
 
 	// Instrument the file instead of just copying
-	if err := instrumentFile(sourceFile, targetFile, packageName, hooks); err != nil {
+	if err := instrumentFile(sourceFile, targetFile, packageName, hooks, hooksImportPath); err != nil {
 		return fmt.Errorf("failed to instrument file: %w", err)
 	}
 
@@ -678,7 +754,7 @@ func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string
 }
 
 // generateModifiedBuildLog generates a new build log with updated file paths for instrumented files
-func generateModifiedBuildLog(commands []Command, fileReplacements map[string]string) error {
+func generateModifiedBuildLog(commands []Command, fileReplacements map[string]string, trampolineFiles map[string]string) error {
 	outputFile := "go-build-modified.log"
 
 	file, err := os.Create(outputFile)
@@ -692,11 +768,19 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 
 		// If this is a compile command, check if we need to replace any file paths
 		if isCompileCommand(&cmd) {
+			packageName := extractPackageName(&cmd)
+			needsTrampolineFile := false
+
 			// Replace file paths in the command - but only for Go files
 			for originalFile, instrumentedFile := range fileReplacements {
 				// Only replace if the original file is a .go file
 				if !strings.HasSuffix(originalFile, ".go") {
 					continue
+				}
+
+				// Check if this replacement is for the current package
+				if strings.Contains(modifiedCommand, originalFile) {
+					needsTrampolineFile = true
 				}
 
 				// Replace both absolute and relative paths
@@ -712,6 +796,15 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 					// Look for the file in -pack arguments
 					modifiedCommand = strings.ReplaceAll(modifiedCommand, " "+originalBasename+" ", " "+instrumentedFile+" ")
 					modifiedCommand = strings.ReplaceAll(modifiedCommand, " "+originalBasename+"$", " "+instrumentedFile)
+				}
+			}
+
+			// Add trampolines file to the compile command if this package has hooks
+			if needsTrampolineFile {
+				if trampolinesFile, exists := trampolineFiles[packageName]; exists {
+					// Append the trampolines file at the end of the compile command
+					modifiedCommand = modifiedCommand + " " + trampolinesFile
+					fmt.Printf("           📎 Adding trampolines file to compile command for package '%s': %s\n", packageName, trampolinesFile)
 				}
 			}
 		}

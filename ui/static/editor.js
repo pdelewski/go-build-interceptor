@@ -2614,7 +2614,6 @@ function generateHooksCode(functionNames, moduleName = '') {
     };
 
     // Use a placeholder that will be replaced based on the actual module
-    // The backend will determine the correct module path
     const hooksModulePath = moduleName || 'generated_hooks';
 
     // Generate hook definitions for ProvideHooks()
@@ -2634,29 +2633,67 @@ function generateHooksCode(functionNames, moduleName = '') {
 		},`;
     }).join('\n');
 
-    // Generate Before/After hook implementations
+    // Generate Before/After hook implementations with go:linkname support
     const hookImplementations = functionNames.map(funcName => {
         const pascalName = toPascalCase(funcName);
         return `// Before${pascalName} is called before ${funcName}() executes
-func Before${pascalName}(ctx *hooks.HookContext) error {
-	fmt.Printf("[%s] Starting ${funcName}()\\n", ctx.Function)
-	return nil
+// The HookContext allows passing data to the After hook and skipping the original call
+func Before${pascalName}(ctx HookContext) {
+	ctx.SetKeyData("startTime", time.Now())
+	fmt.Printf("[BEFORE] %s.%s()\\n", ctx.GetPackageName(), ctx.GetFuncName())
 }
 
 // After${pascalName} is called after ${funcName}() completes
-func After${pascalName}(ctx *hooks.HookContext) error {
-	fmt.Printf("[%s] Completed ${funcName}() in %v\\n", ctx.Function, ctx.Duration)
-	return nil
+func After${pascalName}(ctx HookContext) {
+	if startTime, ok := ctx.GetKeyData("startTime").(time.Time); ok {
+		duration := time.Since(startTime)
+		fmt.Printf("[AFTER] %s.%s() completed in %v\\n", ctx.GetPackageName(), ctx.GetFuncName(), duration)
+	}
 }`;
     }).join('\n\n');
 
-    // Build the complete hooks file
-    const code = `package generated_hook
+    // Build the complete hooks file with minimal HookContext interface
+    const code = `package generated_hooks
 
 import (
 	"fmt"
+	"time"
+	_ "unsafe" // Required for go:linkname
+
 	"github.com/pdelewski/go-build-interceptor/hooks"
 )
+
+// ============================================================================
+// Minimal HookContext Interface
+// ============================================================================
+
+// HookContext provides a minimal interface for hook functions.
+// It allows passing data between Before and After hooks, and optionally
+// skipping the original function call.
+type HookContext interface {
+	// SetData stores arbitrary data to pass from Before to After hook
+	SetData(data interface{})
+	// GetData retrieves data stored by SetData
+	GetData() interface{}
+	// SetKeyData stores a key-value pair
+	SetKeyData(key string, val interface{})
+	// GetKeyData retrieves a value by key
+	GetKeyData(key string) interface{}
+	// HasKeyData checks if a key exists
+	HasKeyData(key string) bool
+	// SetSkipCall when true, skips the original function call
+	SetSkipCall(skip bool)
+	// IsSkipCall returns whether to skip the original call
+	IsSkipCall() bool
+	// GetFuncName returns the name of the hooked function
+	GetFuncName() string
+	// GetPackageName returns the package name of the hooked function
+	GetPackageName() string
+}
+
+// ============================================================================
+// Hook Provider (for go-build-interceptor)
+// ============================================================================
 
 // GeneratedHookProvider implements the HookProvider interface
 type GeneratedHookProvider struct{}
@@ -2668,10 +2705,43 @@ ${hookDefinitions}
 	}
 }
 
-${hookImplementations}
-
 // Ensure GeneratedHookProvider implements the HookProvider interface
 var _ hooks.HookProvider = (*GeneratedHookProvider)(nil)
+
+// ============================================================================
+// Hook Implementations
+// ============================================================================
+
+${hookImplementations}
+
+// ============================================================================
+// go:linkname Usage (for reference)
+// ============================================================================
+//
+// When go-build-interceptor injects hooks into the target code, it should
+// generate go:linkname declarations to call these hooks. Example:
+//
+// In the TARGET package (e.g., main), the injected code would look like:
+//
+//     import _ "unsafe" // required for go:linkname
+//
+//     //go:linkname BeforeMyFunc generated_hooks.BeforeMyFunc
+//     func BeforeMyFunc(ctx HookContext)
+//
+//     //go:linkname AfterMyFunc generated_hooks.AfterMyFunc
+//     func AfterMyFunc(ctx HookContext)
+//
+//     func MyFunc() {
+//         ctx := &HookContextImpl{funcName: "MyFunc", packageName: "main"}
+//         BeforeMyFunc(ctx)
+//         if !ctx.IsSkipCall() {
+//             defer AfterMyFunc(ctx)
+//             // original function body...
+//         }
+//     }
+//
+// This allows the hooks to be defined in this separate module while being
+// called from the instrumented target code.
 `;
 
     return code;
