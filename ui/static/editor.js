@@ -3347,7 +3347,7 @@ function addTerminalOutput(text, className = '') {
 
 // Update the runCompile function to show output in message window
 async function runCompile() {
-    const hooksFile = prompt('Enter hooks file path (e.g., ../hello_hook/hello_hooks.go):');
+    const hooksFile = prompt('Enter hooks file path:', './generated_hooks/generated_hooks.go');
 
     if (!hooksFile || hooksFile.trim() === '') {
         return;
