@@ -21,3 +21,17 @@ type InjectFunctions struct {
 	After  string
 	From   string
 }
+
+// HookContext provides a minimal interface for hook functions.
+// This interface is implemented by the generated trampoline code.
+type HookContext interface {
+	SetData(data interface{})
+	GetData() interface{}
+	SetKeyData(key string, val interface{})
+	GetKeyData(key string) interface{}
+	HasKeyData(key string) bool
+	SetSkipCall(skip bool)
+	IsSkipCall() bool
+	GetFuncName() string
+	GetPackageName() string
+}

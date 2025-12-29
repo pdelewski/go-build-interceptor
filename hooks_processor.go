@@ -554,33 +554,23 @@ func generateTrampolinesFile(targetFile string, packageName string, hooks []Hook
 	// Write package declaration
 	sb.WriteString(fmt.Sprintf("package %s\n\n", packageName))
 
-	// Write imports - only unsafe for go:linkname
-	sb.WriteString("import _ \"unsafe\" // Required for go:linkname\n\n")
+	// Write imports - unsafe for go:linkname and hooks for HookContext
+	sb.WriteString(`import (
+	_ "unsafe" // Required for go:linkname
 
-	fmt.Printf("           🔗 Using go:linkname to link to: %s\n", hooksImportPath)
-
-	// Write HookContext interface (only once)
-	sb.WriteString(`// HookContext provides a minimal interface for hook functions
-type HookContext interface {
-	SetData(data interface{})
-	GetData() interface{}
-	SetKeyData(key string, val interface{})
-	GetKeyData(key string) interface{}
-	HasKeyData(key string) bool
-	SetSkipCall(skip bool)
-	IsSkipCall() bool
-	GetFuncName() string
-	GetPackageName() string
-}
+	"github.com/pdelewski/go-build-interceptor/hooks"
+)
 
 `)
+
+	fmt.Printf("           🔗 Using go:linkname to link to: %s\n", hooksImportPath)
 
 	// Generate trampolines for each hook
 	for _, hook := range hooks {
 		pascalName := capitalizeFirst(hook.Function)
 
-		// HookContextImpl struct
-		sb.WriteString(fmt.Sprintf(`// HookContextImpl%s implements HookContext for %s
+		// HookContextImpl struct - implements hooks.HookContext
+		sb.WriteString(fmt.Sprintf(`// HookContextImpl%s implements hooks.HookContext for %s
 type HookContextImpl%s struct {
 	data        interface{}
 	skipCall    bool
@@ -654,7 +644,7 @@ func OtelBeforeTrampoline_%s() (hookContext *HookContextImpl%s, skipCall bool) {
 
 		// After trampoline - calls the go:linkname function
 		sb.WriteString(fmt.Sprintf(`// OtelAfterTrampoline_%s is the after trampoline for %s
-func OtelAfterTrampoline_%s(hookContext HookContext) {
+func OtelAfterTrampoline_%s(hookContext hooks.HookContext) {
 	defer func() {
 		if err := recover(); err != nil {
 			println("failed to exec After hook", "After%s")
@@ -670,9 +660,9 @@ func OtelAfterTrampoline_%s(hookContext HookContext) {
 
 		// go:linkname function declarations (link to external package)
 		sb.WriteString(fmt.Sprintf("//go:linkname Before%s %s.Before%s\n", pascalName, hooksImportPath, pascalName))
-		sb.WriteString(fmt.Sprintf("func Before%s(ctx HookContext)\n\n", pascalName))
+		sb.WriteString(fmt.Sprintf("func Before%s(ctx hooks.HookContext)\n\n", pascalName))
 		sb.WriteString(fmt.Sprintf("//go:linkname After%s %s.After%s\n", pascalName, hooksImportPath, pascalName))
-		sb.WriteString(fmt.Sprintf("func After%s(ctx HookContext)\n\n", pascalName))
+		sb.WriteString(fmt.Sprintf("func After%s(ctx hooks.HookContext)\n\n", pascalName))
 	}
 
 	// Write to file
@@ -1126,9 +1116,9 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\n"+hooksLibPackageLine+"\nEOF\n", 1)
 					fmt.Printf("           📎 Added packages to main importcfg.link heredoc\n")
 				} else {
-					// For compile, insert before EOF
-					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\nEOF\n", 1)
-					fmt.Printf("           📎 Added hooks package to main importcfg heredoc\n")
+					// For compile, add both generated_hooks and hooks library (trampolines import hooks)
+					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\n"+hooksLibPackageLine+"\nEOF\n", 1)
+					fmt.Printf("           📎 Added packages to main importcfg heredoc\n")
 				}
 			}
 		}
