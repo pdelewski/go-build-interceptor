@@ -2614,7 +2614,6 @@ function generateHooksCode(functionNames, moduleName = '') {
     };
 
     // Use a placeholder that will be replaced based on the actual module
-    // The backend will determine the correct module path
     const hooksModulePath = moduleName || 'generated_hooks';
 
     // Generate hook definitions for ProvideHooks()
@@ -2634,44 +2633,55 @@ function generateHooksCode(functionNames, moduleName = '') {
 		},`;
     }).join('\n');
 
-    // Generate Before/After hook implementations
+    // Generate Before/After hook implementations with go:linkname support
+    // Uses hooks.HookContext from the hooks package
     const hookImplementations = functionNames.map(funcName => {
         const pascalName = toPascalCase(funcName);
         return `// Before${pascalName} is called before ${funcName}() executes
-func Before${pascalName}(ctx *hooks.HookContext) error {
-	fmt.Printf("[%s] Starting ${funcName}()\\n", ctx.Function)
-	return nil
+// The HookContext allows passing data to the After hook and skipping the original call
+func Before${pascalName}(ctx hooks.HookContext) {
+	ctx.SetKeyData("startTime", time.Now())
+	fmt.Printf("[BEFORE] %s.%s()\\n", ctx.GetPackageName(), ctx.GetFuncName())
 }
 
 // After${pascalName} is called after ${funcName}() completes
-func After${pascalName}(ctx *hooks.HookContext) error {
-	fmt.Printf("[%s] Completed ${funcName}() in %v\\n", ctx.Function, ctx.Duration)
-	return nil
+func After${pascalName}(ctx hooks.HookContext) {
+	if startTime, ok := ctx.GetKeyData("startTime").(time.Time); ok {
+		duration := time.Since(startTime)
+		fmt.Printf("[AFTER] %s.%s() completed in %v\\n", ctx.GetPackageName(), ctx.GetFuncName(), duration)
+	}
 }`;
     }).join('\n\n');
 
-    // Build the complete hooks file
-    const code = `package generated_hook
+    // Build the hooks file using the hooks package for types
+    const code = `package generated_hooks
 
 import (
 	"fmt"
+	"time"
+	_ "unsafe" // Required for go:linkname
+
 	"github.com/pdelewski/go-build-interceptor/hooks"
 )
 
-// GeneratedHookProvider implements the HookProvider interface
-type GeneratedHookProvider struct{}
+// ============================================================================
+// Hook Provider (for go-build-interceptor parsing)
+// ============================================================================
 
 // ProvideHooks returns the hook definitions for the selected functions
-func (h *GeneratedHookProvider) ProvideHooks() []*hooks.Hook {
+func ProvideHooks() []*hooks.Hook {
 	return []*hooks.Hook{
 ${hookDefinitions}
 	}
 }
 
-${hookImplementations}
+// ============================================================================
+// Hook Implementations
+// ============================================================================
+// These functions are called via go:linkname from the instrumented code.
+// The instrumented code generates trampoline functions that link to these.
 
-// Ensure GeneratedHookProvider implements the HookProvider interface
-var _ hooks.HookProvider = (*GeneratedHookProvider)(nil)
+${hookImplementations}
 `;
 
     return code;

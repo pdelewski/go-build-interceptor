@@ -96,7 +96,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 var globalTracer = NewCallTracer()
 
 // Tracing hook implementations
-func TracingBeforeMain(ctx *hooks.HookContext) error {
+func TracingBeforeMain(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	
@@ -106,7 +106,7 @@ func TracingBeforeMain(ctx *hooks.HookContext) error {
 	return nil
 }
 
-func TracingAfterMain(ctx *hooks.HookContext) error {
+func TracingAfterMain(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	
@@ -115,7 +115,7 @@ func TracingAfterMain(ctx *hooks.HookContext) error {
 	return nil
 }
 
-func TracingBeforeFoo(ctx *hooks.HookContext) error {
+func TracingBeforeFoo(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	
@@ -125,7 +125,7 @@ func TracingBeforeFoo(ctx *hooks.HookContext) error {
 	return nil
 }
 
-func TracingAfterFoo(ctx *hooks.HookContext) error {
+func TracingAfterFoo(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	
@@ -134,7 +134,7 @@ func TracingAfterFoo(ctx *hooks.HookContext) error {
 	return nil
 }
 
-func TracingBeforeBar1(ctx *hooks.HookContext) error {
+func TracingBeforeBar1(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	
@@ -144,7 +144,7 @@ func TracingBeforeBar1(ctx *hooks.HookContext) error {
 	return nil
 }
 
-func TracingAfterBar1(ctx *hooks.HookContext) error {
+func TracingAfterBar1(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	
@@ -153,7 +153,7 @@ func TracingAfterBar1(ctx *hooks.HookContext) error {
 	return nil
 }
 
-func TracingBeforeBar2(ctx *hooks.HookContext) error {
+func TracingBeforeBar2(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	
@@ -163,7 +163,7 @@ func TracingBeforeBar2(ctx *hooks.HookContext) error {
 	return nil
 }
 
-func TracingAfterBar2(ctx *hooks.HookContext) error {
+func TracingAfterBar2(ctx *hooks.RuntimeHookContext) error {
 	globalTracer.mu.Lock()
 	defer globalTracer.mu.Unlock()
 	

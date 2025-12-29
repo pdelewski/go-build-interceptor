@@ -7,30 +7,13 @@ import (
 	"time"
 )
 
-// FunctionRewriteHook allows complete rewriting of a function's AST
+// FunctionRewriteHook allows complete rewriting of a function's AST.
+// Use this type when assigning to Hook.Rewrite field.
 type FunctionRewriteHook func(originalNode ast.Node) (ast.Node, error)
 
-// Core hook definition
-type Hook struct {
-	Target  InjectTarget
-	Hooks   *InjectFunctions    // Optional: for before/after hooks
-	Rewrite FunctionRewriteHook // Optional: for rewriting entire function
-}
-
-type InjectTarget struct {
-	Package  string
-	Function string
-	Receiver string
-}
-
-type InjectFunctions struct {
-	Before string
-	After  string
-	From   string
-}
-
-// Framework-provided context for hook functions
-type HookContext struct {
+// RuntimeHookContext provides a full-featured context for hook functions.
+// This is used by advanced hooks that need access to timing, results, and context.
+type RuntimeHookContext struct {
 	// Target information
 	Package  string
 	Function string
@@ -49,9 +32,9 @@ type HookContext struct {
 	Ctx context.Context
 }
 
-// Function signature stubs that all hook implementations must follow
-type BeforeHook func(hookCtx *HookContext) error
-type AfterHook func(hookCtx *HookContext) error
+// Function signature stubs for advanced hook implementations
+type BeforeHook func(hookCtx *RuntimeHookContext) error
+type AfterHook func(hookCtx *RuntimeHookContext) error
 
 // HookProvider interface that users must implement to provide their hooks
 type HookProvider interface {
@@ -68,7 +51,7 @@ func (h *Hook) Validate() error {
 	}
 	// Receiver can be empty for package-level functions
 
-	// Must have either Hooks or Rewrite, but not necessarily both
+	// Must have either Hooks or Rewrite specified
 	if h.Hooks == nil && h.Rewrite == nil {
 		return fmt.Errorf("either Hooks or Rewrite must be specified")
 	}
