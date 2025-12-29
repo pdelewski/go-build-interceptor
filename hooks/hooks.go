@@ -5,22 +5,16 @@ import (
 	"fmt"
 	"go/ast"
 	"time"
-
-	"github.com/pdelewski/go-build-interceptor/hooktypes"
 )
 
 // FunctionRewriteHook allows complete rewriting of a function's AST
 type FunctionRewriteHook func(originalNode ast.Node) (ast.Node, error)
 
-// Hook extends hooktypes.Hook with advanced rewrite capability
-type Hook struct {
-	hooktypes.Hook
+// AdvancedHook extends Hook with rewrite capability
+type AdvancedHook struct {
+	Hook
 	Rewrite FunctionRewriteHook // Optional: for rewriting entire function
 }
-
-// Re-export lightweight types for convenience
-type InjectTarget = hooktypes.InjectTarget
-type InjectFunctions = hooktypes.InjectFunctions
 
 // Framework-provided context for hook functions
 type HookContext struct {
@@ -61,19 +55,17 @@ func (h *Hook) Validate() error {
 	}
 	// Receiver can be empty for package-level functions
 
-	// Must have either Hooks or Rewrite, but not necessarily both
-	if h.Hooks == nil && h.Rewrite == nil {
-		return fmt.Errorf("either Hooks or Rewrite must be specified")
+	// Must have Hooks specified
+	if h.Hooks == nil {
+		return fmt.Errorf("Hooks must be specified")
 	}
 
 	// If Hooks is specified, validate it
-	if h.Hooks != nil {
-		if h.Hooks.Before == "" && h.Hooks.After == "" {
-			return fmt.Errorf("at least one of Before or After hook must be specified")
-		}
-		if h.Hooks.From == "" {
-			return fmt.Errorf("hook package path is required when using Hooks")
-		}
+	if h.Hooks.Before == "" && h.Hooks.After == "" {
+		return fmt.Errorf("at least one of Before or After hook must be specified")
+	}
+	if h.Hooks.From == "" {
+		return fmt.Errorf("hook package path is required when using Hooks")
 	}
 
 	return nil

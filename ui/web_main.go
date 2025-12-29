@@ -820,11 +820,13 @@ func createHooksModule(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("✅ Created go.mod with module: %s\n", moduleName)
 	}
 
-	// Run go mod tidy to add dependencies
+	// Run go mod tidy to add dependencies in the hooks directory
 	cmd = exec.Command("go", "mod", "tidy")
 	cmd.Dir = fullPath
 	if output, err := cmd.CombinedOutput(); err != nil {
 		fmt.Printf("⚠️ go mod tidy warning: %s\n", string(output))
+	} else {
+		fmt.Printf("✅ Updated hooks module dependencies\n")
 	}
 
 	// Return success with the created paths

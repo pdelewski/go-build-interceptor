@@ -2620,12 +2620,12 @@ function generateHooksCode(functionNames, moduleName = '') {
     const hookDefinitions = functionNames.map(funcName => {
         const pascalName = toPascalCase(funcName);
         return `		{
-			Target: hooktypes.InjectTarget{
+			Target: hooks.InjectTarget{
 				Package:  "main",
 				Function: "${funcName}",
 				Receiver: "",
 			},
-			Hooks: &hooktypes.InjectFunctions{
+			Hooks: &hooks.InjectFunctions{
 				Before: "Before${pascalName}",
 				After:  "After${pascalName}",
 				From:   "${hooksModulePath}",
@@ -2653,7 +2653,7 @@ func After${pascalName}(ctx HookContext) {
 }`;
     }).join('\n\n');
 
-    // Build the hooks file using the hooktypes package for struct types
+    // Build the hooks file using the hooks package for struct types
     // but with a local HookContext interface for runtime
     const code = `package generated_hooks
 
@@ -2662,7 +2662,7 @@ import (
 	"time"
 	_ "unsafe" // Required for go:linkname
 
-	"github.com/pdelewski/go-build-interceptor/hooktypes"
+	"github.com/pdelewski/go-build-interceptor/hooks"
 )
 
 // ============================================================================
@@ -2687,8 +2687,8 @@ type HookContext interface {
 // ============================================================================
 
 // ProvideHooks returns the hook definitions for the selected functions
-func ProvideHooks() []*hooktypes.Hook {
-	return []*hooktypes.Hook{
+func ProvideHooks() []*hooks.Hook {
+	return []*hooks.Hook{
 ${hookDefinitions}
 	}
 }
