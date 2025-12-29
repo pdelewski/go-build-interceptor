@@ -728,6 +728,52 @@ func capitalizeFirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// addBlankImport adds a blank import (import _ "path") to a Go AST
+func addBlankImport(node *ast.File, importPath string) {
+	// Check if import already exists
+	for _, imp := range node.Imports {
+		if imp.Path != nil && strings.Trim(imp.Path.Value, `"`) == importPath {
+			return // Import already exists
+		}
+	}
+
+	// Create the new import spec: _ "importPath"
+	newImport := &ast.ImportSpec{
+		Name: ast.NewIdent("_"),
+		Path: &ast.BasicLit{
+			Kind:  token.STRING,
+			Value: fmt.Sprintf(`"%s"`, importPath),
+		},
+	}
+
+	// Find or create import declaration
+	var importDecl *ast.GenDecl
+	for _, decl := range node.Decls {
+		if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.IMPORT {
+			importDecl = genDecl
+			break
+		}
+	}
+
+	if importDecl != nil {
+		// Add to existing import declaration
+		importDecl.Specs = append(importDecl.Specs, newImport)
+	} else {
+		// Create new import declaration
+		importDecl = &ast.GenDecl{
+			Tok:   token.IMPORT,
+			Specs: []ast.Spec{newImport},
+		}
+		// Insert after package declaration
+		newDecls := []ast.Decl{importDecl}
+		newDecls = append(newDecls, node.Decls...)
+		node.Decls = newDecls
+	}
+
+	// Update the Imports slice
+	node.Imports = append(node.Imports, newImport)
+}
+
 // copyAndInstrumentFileOnly copies and instruments a source file without replacing the original
 func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string, packageName string, hooks []HookDefinition, hooksImportPath string) error {
 	if workDir == "" || buildID == "" {
