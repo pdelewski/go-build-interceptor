@@ -992,15 +992,36 @@ class CodeEditor {
         }
 
         const fileBreakpoints = this.breakpoints.get(filename);
+        const absolutePath = filename.startsWith('/') ? filename : `${window.PROJECT_ROOT}/${filename}`;
 
         if (fileBreakpoints.has(lineNumber)) {
             // Remove breakpoint
             fileBreakpoints.delete(lineNumber);
             console.log(`🔴 Removed breakpoint at ${filename}:${lineNumber}`);
+
+            // If debugging, tell dlv to remove the breakpoint
+            if (typeof isDebugging !== 'undefined' && isDebugging) {
+                const key = `${absolutePath}:${lineNumber}`;
+                const bpId = breakpointIds.get(key);
+                if (bpId) {
+                    sendDebugCommand({ command: 'clearBreakpoint', id: bpId });
+                    breakpointIds.delete(key);
+                }
+            }
         } else {
             // Add breakpoint
             fileBreakpoints.add(lineNumber);
             console.log(`🔴 Added breakpoint at ${filename}:${lineNumber}`);
+
+            // If debugging, tell dlv to add the breakpoint
+            if (typeof isDebugging !== 'undefined' && isDebugging) {
+                console.log(`Sending breakpoint to dlv: ${absolutePath}:${lineNumber}`);
+                sendDebugCommand({
+                    command: 'setBreakpoint',
+                    file: absolutePath,
+                    line: lineNumber
+                });
+            }
         }
 
         // Update decorations
@@ -3470,3 +3491,341 @@ async function runExecutable() {
         showMessageWindow('Execution Error', 'Failed to run executable: ' + err.message, 'error');
     }
 }
+
+// ============================================
+// Debug Session Management
+// ============================================
+
+let debugSocket = null;
+let debugPort = 2345;
+let isDebugging = false;
+let currentLineDecoration = [];
+let breakpointIds = new Map(); // file:line -> dlv breakpoint id
+
+// Run the debugger with Delve
+async function runDebug() {
+    const execPath = prompt('Enter executable path to debug (e.g., ./hello or hello):');
+
+    if (!execPath || execPath.trim() === '') {
+        return;
+    }
+
+    const portStr = prompt('Enter debug port (default: 2345):', '2345');
+    debugPort = parseInt(portStr) || 2345;
+
+    // Show loading message
+    updateDebugStatus('Starting...');
+
+    try {
+        // First, start dlv via the API
+        const response = await fetch('/api/debug', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                executablePath: execPath.trim(),
+                port: debugPort
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            showMessageWindow('Debug Failed', data.error, 'error');
+            updateDebugStatus('Failed');
+            return;
+        }
+
+        if (data.success) {
+            // Wait a moment for dlv to fully start
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Connect to the debug WebSocket
+            connectDebugWebSocket(debugPort);
+        }
+    } catch (err) {
+        console.error('Debug error:', err);
+        showMessageWindow('Debug Error', 'Failed to start debugger: ' + err.message, 'error');
+        updateDebugStatus('Error');
+    }
+}
+
+function connectDebugWebSocket(port) {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    debugSocket = new WebSocket(`${wsProtocol}//${window.location.host}/ws/debug?port=${port}`);
+
+    debugSocket.onopen = () => {
+        console.log('Debug WebSocket connected');
+        isDebugging = true;
+        document.getElementById('debugToolbar').style.display = 'flex';
+        updateDebugStatus('Connected - Setting breakpoints...');
+
+        // Send all existing breakpoints to dlv
+        sendExistingBreakpoints();
+
+        // Request initial state after a short delay
+        setTimeout(() => {
+            sendDebugCommand({ command: 'state' });
+            updateDebugStatus('Ready - Click Continue (F5) to start');
+        }, 500);
+    };
+
+    debugSocket.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            handleDebugMessage(msg);
+        } catch (err) {
+            console.error('Error parsing debug message:', err);
+        }
+    };
+
+    debugSocket.onclose = () => {
+        console.log('Debug WebSocket closed');
+        endDebugSession();
+    };
+
+    debugSocket.onerror = (err) => {
+        console.error('Debug WebSocket error:', err);
+        showMessageWindow('Debug Error', 'WebSocket connection failed', 'error');
+        endDebugSession();
+    };
+}
+
+function handleDebugMessage(msg) {
+    console.log('Debug message received:', JSON.stringify(msg, null, 2));
+
+    if (msg.type === 'error') {
+        showMessageWindow('Debug Error', msg.error, 'error');
+        return;
+    }
+
+    if (msg.type === 'response') {
+        // Parse the result
+        let result = msg.result;
+        if (typeof result === 'string') {
+            try {
+                result = JSON.parse(result);
+            } catch (e) {
+                console.log('Could not parse result as JSON:', result);
+            }
+        }
+
+        console.log('Parsed result:', result);
+
+        if (!result) {
+            console.log('No result in response');
+            return;
+        }
+
+        // Check for state information (dlv Command responses have State)
+        if (result.State) {
+            console.log('Found State in result');
+            updateDebugState(result.State);
+        }
+        // State method returns state directly
+        else if (result.Running !== undefined || result.CurrentThread || result.SelectedGoroutine) {
+            console.log('Result appears to be state directly');
+            updateDebugState(result);
+        }
+
+        // Check for breakpoint creation response
+        if (result.Breakpoint) {
+            const bp = result.Breakpoint;
+            const key = `${bp.file || bp.File}:${bp.line || bp.Line}`;
+            const bpId = bp.id || bp.ID;
+            console.log(`Breakpoint created: ${key} -> id=${bpId}`);
+            breakpointIds.set(key, bpId);
+        }
+    }
+}
+
+function updateDebugState(state) {
+    if (!state) return;
+
+    console.log('Debug state:', JSON.stringify(state, null, 2));
+
+    if (state.exited || state.Exited) {
+        updateDebugStatus('Program exited');
+        clearCurrentLineHighlight();
+        return;
+    }
+
+    if (state.Running) {
+        updateDebugStatus('Running...');
+        clearCurrentLineHighlight();
+        return;
+    }
+
+    // Get current location - try multiple sources (dlv uses capitalized field names)
+    let loc = null;
+    let funcName = 'unknown';
+
+    // Try SelectedGoroutine first (dlv's field name)
+    if (state.SelectedGoroutine && state.SelectedGoroutine.currentLoc) {
+        loc = state.SelectedGoroutine.currentLoc;
+    } else if (state.selectedGoroutine && state.selectedGoroutine.currentLoc) {
+        loc = state.selectedGoroutine.currentLoc;
+    }
+    // Fall back to CurrentThread
+    else if (state.CurrentThread) {
+        loc = {
+            file: state.CurrentThread.file,
+            line: state.CurrentThread.line,
+            function: state.CurrentThread.function
+        };
+    } else if (state.currentThread) {
+        loc = {
+            file: state.currentThread.file,
+            line: state.currentThread.line,
+            function: state.currentThread.function
+        };
+    }
+
+    if (loc && loc.file && loc.line) {
+        const file = loc.file;
+        const line = loc.line;
+        funcName = loc.function ? (loc.function.name || loc.function.Name || 'unknown') : 'unknown';
+
+        updateDebugStatus(`Paused at ${funcName} (line ${line})`);
+
+        // Highlight current line
+        highlightCurrentLine(file, line);
+    }
+}
+
+function highlightCurrentLine(file, line) {
+    // Clear previous highlight
+    clearCurrentLineHighlight();
+
+    const editor = window.codeEditor?.monacoEditor;
+    if (!editor) return;
+
+    // Check if we need to open the file
+    const fileName = file.split('/').pop();
+
+    currentLineDecoration = editor.deltaDecorations(currentLineDecoration, [{
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+            isWholeLine: true,
+            className: 'current-line-decoration',
+            glyphMarginClassName: 'current-line-glyph'
+        }
+    }]);
+
+    // Scroll to the line
+    editor.revealLineInCenter(line);
+}
+
+function clearCurrentLineHighlight() {
+    const editor = window.codeEditor?.monacoEditor;
+    if (editor && currentLineDecoration.length > 0) {
+        currentLineDecoration = editor.deltaDecorations(currentLineDecoration, []);
+    }
+}
+
+function sendDebugCommand(cmd) {
+    if (debugSocket && debugSocket.readyState === WebSocket.OPEN) {
+        console.log('Sending debug command:', cmd);
+        debugSocket.send(JSON.stringify(cmd));
+    } else {
+        console.warn('Debug socket not connected');
+    }
+}
+
+// Send all existing breakpoints to dlv when debug session starts
+function sendExistingBreakpoints() {
+    console.log('Sending existing breakpoints to dlv...');
+
+    const breakpoints = window.codeEditor?.breakpoints;
+    if (!breakpoints) {
+        console.log('No breakpoints map found');
+        return;
+    }
+
+    for (const [filePath, lineSet] of breakpoints) {
+        for (const line of lineSet) {
+            // Build absolute file path
+            const absolutePath = filePath.startsWith('/') ? filePath : `${window.PROJECT_ROOT}/${filePath}`;
+            console.log(`Setting breakpoint: ${absolutePath}:${line}`);
+
+            sendDebugCommand({
+                command: 'setBreakpoint',
+                file: absolutePath,
+                line: line
+            });
+        }
+    }
+}
+
+function updateDebugStatus(status) {
+    const statusEl = document.getElementById('debugStatus');
+    if (statusEl) {
+        statusEl.textContent = status;
+    }
+}
+
+// Debug control functions
+function debugContinue() {
+    updateDebugStatus('Running...');
+    clearCurrentLineHighlight();
+    sendDebugCommand({ command: 'continue' });
+}
+
+function debugStepOver() {
+    updateDebugStatus('Stepping...');
+    sendDebugCommand({ command: 'next' });
+}
+
+function debugStepInto() {
+    updateDebugStatus('Stepping...');
+    sendDebugCommand({ command: 'step' });
+}
+
+function debugStepOut() {
+    updateDebugStatus('Stepping...');
+    sendDebugCommand({ command: 'stepOut' });
+}
+
+function debugStop() {
+    sendDebugCommand({ command: 'stop' });
+    endDebugSession();
+}
+
+function endDebugSession() {
+    isDebugging = false;
+    document.getElementById('debugToolbar').style.display = 'none';
+    clearCurrentLineHighlight();
+
+    if (debugSocket) {
+        debugSocket.close();
+        debugSocket = null;
+    }
+
+    updateDebugStatus('Stopped');
+}
+
+// ============================================
+// Keyboard Shortcuts for Debug
+// ============================================
+
+document.addEventListener('keydown', (e) => {
+    if (!isDebugging) return;
+
+    if (e.key === 'F5' && !e.shiftKey) {
+        e.preventDefault();
+        debugContinue();
+    } else if (e.key === 'F10') {
+        e.preventDefault();
+        debugStepOver();
+    } else if (e.key === 'F11' && !e.shiftKey) {
+        e.preventDefault();
+        debugStepInto();
+    } else if (e.key === 'F11' && e.shiftKey) {
+        e.preventDefault();
+        debugStepOut();
+    } else if (e.key === 'F5' && e.shiftKey) {
+        e.preventDefault();
+        debugStop();
+    }
+});
