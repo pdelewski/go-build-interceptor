@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -1029,6 +1030,16 @@ func capitalizeFirst(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// stripTrimpath removes the -trimpath argument and its value from a compile command
+// This preserves full WORK directory paths in the binary's debug info for dlv
+// Pattern: -trimpath "$WORK/bXXX=>" or -trimpath $WORK/bXXX=>
+func stripTrimpath(command string) string {
+	// Pattern matches: -trimpath "$WORK/bXXX=>" or -trimpath '$WORK/bXXX=>' or -trimpath $WORK/bXXX=>
+	// The value can be quoted with double quotes, single quotes, or unquoted
+	re := regexp.MustCompile(`\s-trimpath\s+["']?\$WORK/b\d+=>['"']?`)
+	return re.ReplaceAllString(command, " ")
+}
+
 // generateOtelRuntimeFile generates the otel.runtime.go file that imports the hooks package
 // This file is added to the main package to ensure the hooks package is compiled and linked
 func generateOtelRuntimeFile(targetDir string, hooksImportPath string) (string, error) {
@@ -1418,6 +1429,22 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 				}
 				hooksCompileInserted = true
 				fmt.Printf("           📎 Inserted hooks compile command before main\n")
+			}
+
+			// Check if this package has instrumented files
+			hasInstrumentedFiles := false
+			for originalFile := range fileReplacements {
+				if strings.Contains(modifiedCommand, originalFile) || strings.Contains(modifiedCommand, filepath.Base(originalFile)) {
+					hasInstrumentedFiles = true
+					break
+				}
+			}
+
+			// Strip -trimpath for instrumented packages so dlv can find source files
+			// This preserves full WORK directory paths in the binary's debug info
+			if hasInstrumentedFiles {
+				modifiedCommand = stripTrimpath(modifiedCommand)
+				fmt.Printf("           🔧 Stripped -trimpath for package '%s' to preserve debug paths\n", packageName)
 			}
 
 			// Replace file paths in the command - but only for Go files
