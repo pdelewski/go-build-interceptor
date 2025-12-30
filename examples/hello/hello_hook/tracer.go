@@ -50,7 +50,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 			Hooks: &hooks.InjectFunctions{
 				Before: "TracingBeforeMain",
 				After:  "TracingAfterMain",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
+				From:   "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook",
 			},
 		},
 		{
@@ -62,7 +62,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 			Hooks: &hooks.InjectFunctions{
 				Before: "TracingBeforeFoo",
 				After:  "TracingAfterFoo",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
+				From:   "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook",
 			},
 		},
 		{
@@ -74,7 +74,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 			Hooks: &hooks.InjectFunctions{
 				Before: "TracingBeforeBar1",
 				After:  "TracingAfterBar1",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
+				From:   "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook",
 			},
 		},
 		{
@@ -86,7 +86,7 @@ func (t *TracingHookProvider) ProvideHooks() []*hooks.Hook {
 			Hooks: &hooks.InjectFunctions{
 				Before: "TracingBeforeBar2",
 				After:  "TracingAfterBar2",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
+				From:   "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook",
 			},
 		},
 	}

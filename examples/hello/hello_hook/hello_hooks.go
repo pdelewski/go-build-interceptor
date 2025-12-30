@@ -23,7 +23,7 @@ func (h *HelloHookProvider) ProvideHooks() []*hooks.Hook {
 			Hooks: &hooks.InjectFunctions{
 				Before: "BeforeFoo",
 				After:  "AfterFoo",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
+				From:   "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook",
 			},
 		},
 		// Example of function rewrite
@@ -45,7 +45,7 @@ func (h *HelloHookProvider) ProvideHooks() []*hooks.Hook {
 			Hooks: &hooks.InjectFunctions{
 				Before: "BeforeBar2",
 				After:  "AfterBar2",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
+				From:   "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook",
 			},
 			Rewrite: RewriteBar2,
 		},
@@ -58,7 +58,7 @@ func (h *HelloHookProvider) ProvideHooks() []*hooks.Hook {
 			Hooks: &hooks.InjectFunctions{
 				Before: "BeforeMain",
 				After:  "AfterMain",
-				From:   "github.com/pdelewski/go-build-interceptor/hello_hook",
+				From:   "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook",
 			},
 		},
 	}

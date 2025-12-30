@@ -13,7 +13,7 @@ This module provides `HookProvider` implementations for instrumenting the `hello
 ### Basic Hook Provider
 
 ```go
-import "github.com/pdelewski/go-build-interceptor/hello_hook"
+import "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook"
 
 provider := &hello_hook.HelloHookProvider{}
 hooks := provider.ProvideHooks()
@@ -28,7 +28,7 @@ for _, hook := range hooks {
 ### Tracing Hook Provider
 
 ```go
-import "github.com/pdelewski/go-build-interceptor/hello_hook"
+import "github.com/pdelewski/go-build-interceptor/examples/hello/hello_hook"
 
 provider := hello_hook.NewTracingHookProvider()
 hooks := provider.ProvideHooks()

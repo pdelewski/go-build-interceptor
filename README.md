@@ -406,11 +406,12 @@ go-build-interceptor/
 │       ├── editor.css   # Editor styles
 │       └── monaco/      # Monaco Editor files (via npm)
 │           └── vs/      # Monaco loader and editor
-├── hello/               # Example application
-│   ├── main.go
-│   └── hello_hook/
-│       └── hello_hooks.go  # Example hook definitions
-└── simple-http-server/  # Another example application
+└── examples/            # Example applications
+    ├── hello/
+    │   ├── main.go
+    │   └── hello_hook/
+    │       └── hello_hooks.go  # Example hook definitions
+    └── simple-http-server/
 ```
 
 ## Generated Files
