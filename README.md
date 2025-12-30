@@ -268,6 +268,8 @@ For more advanced use cases, you can completely rewrite a function's AST:
 
 The project includes a web-based IDE (`ui/`) for interactive exploration and code editing with full Go language support.
 
+![Web UI Screenshot](docs/images/ui-screenshot.png)
+
 ### Features
 
 - **Monaco Editor** - VS Code's editor with syntax highlighting, bracket matching, and minimap
