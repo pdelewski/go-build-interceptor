@@ -64,6 +64,44 @@ func ensureGopls() error {
 	return nil
 }
 
+// ensureBuildLog checks if go-build.log exists and captures it if not
+func ensureBuildLog() error {
+	buildLogPath := filepath.Join(rootDirectory, "go-build.log")
+
+	// Check if go-build.log already exists
+	if _, err := os.Stat(buildLogPath); err == nil {
+		log.Printf("Build log already exists: %s\n", buildLogPath)
+		return nil
+	}
+
+	log.Printf("Build log not found, capturing build output for: %s\n", rootDirectory)
+
+	// Get absolute path to go-build-interceptor executable
+	execPath, err := filepath.Abs("../go-build-interceptor")
+	if err != nil {
+		return fmt.Errorf("failed to resolve executable path: %v", err)
+	}
+
+	// Check if executable exists
+	if _, err := os.Stat(execPath); os.IsNotExist(err) {
+		return fmt.Errorf("go-build-interceptor executable not found at: %s", execPath)
+	}
+
+	// Run go-build-interceptor --json to capture the build log
+	log.Printf("Executing: %s --json\n", execPath)
+	cmd := exec.Command(execPath, "--json")
+	cmd.Dir = rootDirectory
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to capture build log: %v", err)
+	}
+
+	log.Println("Build log captured successfully")
+	return nil
+}
+
 // startGopls starts the gopls language server process
 func startGopls() (*exec.Cmd, io.WriteCloser, io.ReadCloser, error) {
 	cmd := exec.Command("gopls", "serve")
@@ -209,6 +247,12 @@ func main() {
 	if err := ensureGopls(); err != nil {
 		log.Printf("Warning: %v\n", err)
 		log.Println("LSP features will not be available")
+	}
+
+	// Ensure build log exists (capture if missing)
+	if err := ensureBuildLog(); err != nil {
+		log.Printf("Warning: %v\n", err)
+		log.Println("Some features may not work without a build log")
 	}
 
 	// Serve static files from the static directory
