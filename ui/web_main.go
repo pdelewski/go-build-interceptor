@@ -1595,26 +1595,24 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 	mappingsPath := filepath.Join(rootDirectory, "source-mappings.json")
 	origToInstr := make(map[string]string) // original -> instrumented (WORK dir path)
 	instrToOrig := make(map[string]string) // instrumented -> original
-	var workDir string
-	var debugDir string
+	var substitutePaths []struct{ From, To string }
 
 	if data, err := ioutil.ReadFile(mappingsPath); err == nil {
 		var mappings SourceMappings
 		if err := json.Unmarshal(data, &mappings); err == nil {
-			workDir = mappings.WorkDir
 			for _, m := range mappings.Mappings {
 				origToInstr[m.Original] = m.Instrumented
 				instrToOrig[m.Instrumented] = m.Original
-				if m.DebugDir != "" {
-					debugDir = m.DebugDir
-				}
-				log.Printf("Source mapping: %s -> %s (debug: %s)\n", m.Original, m.Instrumented, m.DebugCopy)
+				// Build substitute path: original dir -> instrumented dir
+				origDir := filepath.Dir(m.Original)
+				instrDir := filepath.Dir(m.Instrumented)
+				substitutePaths = append(substitutePaths, struct{ From, To string }{origDir, instrDir})
+				log.Printf("Source mapping: %s -> %s\n", m.Original, m.Instrumented)
 			}
 		}
 	}
 
 	log.Printf("Debug WebSocket connection established, connecting to dlv on port %d\n", port)
-	log.Printf("WorkDir: %s, DebugDir: %s\n", workDir, debugDir)
 
 	// Connect to dlv
 	dlvConn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
@@ -1628,10 +1626,15 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dlvConn.Close()
 
-	// Configure dlv substitute-path to find source files
-	// Map from WORK directory to our permanent debug copy directory
-	if workDir != "" && debugDir != "" {
-		log.Printf("Configuring dlv substitute-path: %s -> %s\n", workDir, debugDir)
+	// Configure dlv substitute-path to map original files to instrumented files
+	if len(substitutePaths) > 0 {
+		// Build the Dir array for dlv
+		dirRules := make([]map[string]string, len(substitutePaths))
+		for i, sp := range substitutePaths {
+			dirRules[i] = map[string]string{"From": sp.From, "To": sp.To}
+			log.Printf("Configuring dlv substitute-path: %s -> %s\n", sp.From, sp.To)
+		}
+
 		configReq := DlvRequest{
 			ID:     999,
 			Method: "RPCServer.SetApiVersion",
@@ -1645,13 +1648,13 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 		reader := bufio.NewReader(dlvConn)
 		reader.ReadBytes('\n')
 
-		// Now set substitute path
+		// Now set substitute path (dlv expects Dir array with From/To)
 		substituteReq := DlvRequest{
 			ID:     998,
 			Method: "RPCServer.SetSubstitutePath",
 			Params: []interface{}{
-				[]map[string]string{
-					{"from": workDir, "to": debugDir},
+				map[string]interface{}{
+					"Dir": dirRules,
 				},
 			},
 		}
