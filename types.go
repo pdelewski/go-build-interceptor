@@ -26,6 +26,7 @@ type Config struct {
 	PackPackagePath bool
 	Compile         bool
 	HooksFile       string
+	SourceMappings  bool
 }
 
 // Capturer interface for different capture methods

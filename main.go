@@ -288,6 +288,12 @@ func (p *Processor) executeMode() error {
 			fmt.Printf("Error dumping work directory: %v\n", err)
 		}
 
+	case "source-mappings":
+		fmt.Println("=== Source Mappings Mode ===")
+		if err := generateSourceMappingsFromExisting(); err != nil {
+			fmt.Printf("Error generating source mappings: %v\n", err)
+		}
+
 	case "pack-files":
 		fmt.Println("=== Pack Files Mode ===")
 		compileCount := 0

@@ -1319,7 +1319,9 @@ func getRunExecutable(w http.ResponseWriter, r *http.Request) {
 // SourceMapping represents a mapping from original source file to instrumented file
 type SourceMapping struct {
 	Original     string `json:"original"`
-	Instrumented string `json:"instrumented"`
+	Instrumented string `json:"instrumented"` // WORK directory path (what's in binary debug info)
+	DebugCopy    string `json:"debugCopy"`    // Permanent copy for dlv to find
+	DebugDir     string `json:"debugDir"`     // Base directory of debug copies
 }
 
 // SourceMappings contains all file mappings for dlv debugger
@@ -1372,6 +1374,22 @@ func handleDebug(w http.ResponseWriter, r *http.Request) {
 	if _, err := os.Stat(execPath); os.IsNotExist(err) {
 		sendErrorResponse(w, fmt.Sprintf("Executable not found at: %s", execPath))
 		return
+	}
+
+	// Generate source mappings from existing build log
+	fmt.Printf("📄 Generating source mappings...\n")
+	interceptorPath, err := filepath.Abs("../go-build-interceptor")
+	if err == nil {
+		if _, err := os.Stat(interceptorPath); err == nil {
+			cmd := exec.Command(interceptorPath, "--source-mappings")
+			cmd.Dir = rootDirectory
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				fmt.Printf("⚠️  Source mappings generation failed: %v\n%s\n", err, string(output))
+			} else {
+				fmt.Printf("✅ Source mappings generated\n")
+			}
+		}
 	}
 
 	// Read source mappings
@@ -1522,6 +1540,40 @@ type DlvResponse struct {
 
 var dlvRequestID = 0
 
+// translateFilePaths recursively translates file paths in a JSON structure
+// from instrumented paths back to original paths
+func translateFilePaths(v interface{}, mapping map[string]string) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{})
+		for k, vv := range val {
+			if k == "file" || k == "File" {
+				if fileStr, ok := vv.(string); ok {
+					if origFile, found := mapping[fileStr]; found {
+						log.Printf("Translating file path: %s -> %s\n", fileStr, origFile)
+						result[k] = origFile
+					} else {
+						result[k] = vv
+					}
+				} else {
+					result[k] = vv
+				}
+			} else {
+				result[k] = translateFilePaths(vv, mapping)
+			}
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(val))
+		for i, vv := range val {
+			result[i] = translateFilePaths(vv, mapping)
+		}
+		return result
+	default:
+		return v
+	}
+}
+
 func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -1539,7 +1591,30 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Load source mappings for file path translation
+	mappingsPath := filepath.Join(rootDirectory, "source-mappings.json")
+	origToInstr := make(map[string]string) // original -> instrumented (WORK dir path)
+	instrToOrig := make(map[string]string) // instrumented -> original
+	var workDir string
+	var debugDir string
+
+	if data, err := ioutil.ReadFile(mappingsPath); err == nil {
+		var mappings SourceMappings
+		if err := json.Unmarshal(data, &mappings); err == nil {
+			workDir = mappings.WorkDir
+			for _, m := range mappings.Mappings {
+				origToInstr[m.Original] = m.Instrumented
+				instrToOrig[m.Instrumented] = m.Original
+				if m.DebugDir != "" {
+					debugDir = m.DebugDir
+				}
+				log.Printf("Source mapping: %s -> %s (debug: %s)\n", m.Original, m.Instrumented, m.DebugCopy)
+			}
+		}
+	}
+
 	log.Printf("Debug WebSocket connection established, connecting to dlv on port %d\n", port)
+	log.Printf("WorkDir: %s, DebugDir: %s\n", workDir, debugDir)
 
 	// Connect to dlv
 	dlvConn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
@@ -1552,6 +1627,43 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer dlvConn.Close()
+
+	// Configure dlv substitute-path to find source files
+	// Map from WORK directory to our permanent debug copy directory
+	if workDir != "" && debugDir != "" {
+		log.Printf("Configuring dlv substitute-path: %s -> %s\n", workDir, debugDir)
+		configReq := DlvRequest{
+			ID:     999,
+			Method: "RPCServer.SetApiVersion",
+			Params: []interface{}{map[string]interface{}{"APIVersion": 2}},
+		}
+		configBytes, _ := json.Marshal(configReq)
+		configBytes = append(configBytes, '\n')
+		dlvConn.Write(configBytes)
+
+		// Read response (discard it)
+		reader := bufio.NewReader(dlvConn)
+		reader.ReadBytes('\n')
+
+		// Now set substitute path
+		substituteReq := DlvRequest{
+			ID:     998,
+			Method: "RPCServer.SetSubstitutePath",
+			Params: []interface{}{
+				[]map[string]string{
+					{"from": workDir, "to": debugDir},
+				},
+			},
+		}
+		subBytes, _ := json.Marshal(substituteReq)
+		subBytes = append(subBytes, '\n')
+		dlvConn.Write(subBytes)
+		log.Printf("Sent substitute path config to dlv\n")
+
+		// Read response
+		resp, _ := reader.ReadBytes('\n')
+		log.Printf("Substitute path response: %s\n", string(resp))
+	}
 
 	// Create a channel for dlv responses
 	dlvResponses := make(chan []byte, 10)
@@ -1593,13 +1705,23 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 
-				log.Printf("Parsed dlv response - ID: %d, Result: %v, Error: %v\n", dlvResp.ID, dlvResp.Result, dlvResp.Error)
+				// Translate file paths in the result from instrumented to original
+				var result interface{}
+				if len(dlvResp.Result) > 0 {
+					if err := json.Unmarshal(dlvResp.Result, &result); err == nil {
+						result = translateFilePaths(result, instrToOrig)
+					} else {
+						result = dlvResp.Result
+					}
+				}
+
+				log.Printf("Parsed dlv response - ID: %d, Error: %v\n", dlvResp.ID, dlvResp.Error)
 
 				// Forward to browser
 				conn.WriteJSON(map[string]interface{}{
 					"type":   "response",
 					"id":     dlvResp.ID,
-					"result": dlvResp.Result,
+					"result": result,
 					"error":  dlvResp.Error,
 				})
 			}
@@ -1647,9 +1769,17 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 			dlvReq.Params = []interface{}{map[string]interface{}{"name": "halt"}}
 		case "setBreakpoint":
 			dlvReq.Method = "RPCServer.CreateBreakpoint"
+			// Translate original file path to instrumented file path
+			bpFile := cmd.File
+			if instrFile, ok := origToInstr[cmd.File]; ok {
+				log.Printf("Translating breakpoint file: %s -> %s\n", cmd.File, instrFile)
+				bpFile = instrFile
+			} else {
+				log.Printf("No mapping found for file: %s (using as-is)\n", cmd.File)
+			}
 			dlvReq.Params = []interface{}{map[string]interface{}{
 				"Breakpoint": map[string]interface{}{
-					"file": cmd.File,
+					"file": bpFile,
 					"line": cmd.Line,
 				},
 			}}
