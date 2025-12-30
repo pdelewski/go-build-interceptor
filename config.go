@@ -24,6 +24,7 @@ func ParseFlags() *Config {
 	flag.BoolVar(&config.PackPackagePath, "pack-packagepath", false, "Extract and display package names with their source paths from compile commands")
 	flag.StringVar(&config.HooksFile, "compile", "", "Parse hooks file and match against functions in compile commands")
 	flag.StringVar(&config.HooksFile, "c", "", "Parse hooks file and match against functions in compile commands (short for --compile)")
+	flag.BoolVar(&config.SourceMappings, "source-mappings", false, "Generate source-mappings.json from existing go-build.log (for dlv debugger)")
 
 	flag.Parse()
 
@@ -43,6 +44,8 @@ func (c *Config) GetExecutionMode() string {
 		return "capture"
 	case c.Compile:
 		return "compile"
+	case c.SourceMappings:
+		return "source-mappings"
 	case c.WorkDir:
 		return "workdir"
 	case c.PackPackagePath:

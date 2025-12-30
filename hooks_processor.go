@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -10,8 +11,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// SourceMapping represents a mapping from original source file to instrumented file
+type SourceMapping struct {
+	Original     string `json:"original"`
+	Instrumented string `json:"instrumented"` // WORK directory path (what's in binary debug info)
+	DebugCopy    string `json:"debugCopy"`    // Permanent copy for dlv to find
+	DebugDir     string `json:"debugDir"`     // Base directory of debug copies
+}
+
+// SourceMappings contains all file mappings for dlv debugger
+type SourceMappings struct {
+	WorkDir  string          `json:"workDir"`
+	Mappings []SourceMapping `json:"mappings"`
+}
 
 // HookDefinition represents a parsed hook from the hooks file
 type HookDefinition struct {
@@ -452,6 +468,13 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 		} else {
 			fmt.Printf("\n📄 Generated modified build log: go-build-modified.log\n")
 
+			// Save source mappings for dlv debugger
+			if err := saveSourceMappings(fileReplacements, workDir); err != nil {
+				fmt.Printf("⚠️  Failed to save source mappings: %v\n", err)
+			} else {
+				fmt.Printf("📄 Generated source mappings: source-mappings.json\n")
+			}
+
 			// Execute commands from the modified build log using existing functionality
 			fmt.Printf("\n🚀 Executing commands from modified build log...\n")
 			if err := executeModifiedBuildLogWithParser("go-build-modified.log"); err != nil {
@@ -473,6 +496,267 @@ func extractWorkDirFromCommands(commands []Command) string {
 		}
 	}
 	return ""
+}
+
+// saveSourceMappings saves the file mappings to source-mappings.json for dlv debugger
+// It reads the WORK directory from go-build.log (matching what's in the compiled binary)
+// and copies instrumented source files to a permanent location (.otel-build/debug/).
+// The mappings contain:
+// - original: the original source file path
+// - instrumented: the WORK directory path (what's compiled into the binary)
+// - debugCopy: permanent copy of the instrumented file for dlv to find
+func saveSourceMappings(fileReplacements map[string]string, currentWorkDir string) error {
+	// Read the WORK directory from go-build.log (this matches what's in the binary)
+	workDir := getWorkDirFromBuildLog()
+	if workDir == "" {
+		// Fall back to current work dir if go-build.log not found
+		workDir = currentWorkDir
+		fmt.Printf("⚠️  Could not read WORK dir from go-build.log, using current: %s\n", workDir)
+	} else {
+		fmt.Printf("📍 Using WORK directory from go-build.log: %s\n", workDir)
+	}
+
+	// Create permanent directory for instrumented sources
+	debugDir := ".otel-build/debug"
+	if err := os.MkdirAll(debugDir, 0755); err != nil {
+		return fmt.Errorf("failed to create debug directory: %w", err)
+	}
+
+	mappings := SourceMappings{
+		WorkDir:  workDir,
+		Mappings: make([]SourceMapping, 0, len(fileReplacements)),
+	}
+
+	for original, instrumented := range fileReplacements {
+		// Convert relative paths to absolute paths
+		absOriginal := original
+		if !filepath.IsAbs(original) {
+			if abs, err := filepath.Abs(original); err == nil {
+				absOriginal = abs
+			}
+		}
+
+		// Extract the relative path from WORK directory (e.g., b001/src/main.go)
+		// Use current work dir to extract relative path, then apply to saved work dir
+		relPath := strings.TrimPrefix(instrumented, currentWorkDir)
+		relPath = strings.TrimPrefix(relPath, "/")
+
+		// The instrumented path as recorded in the binary's debug info
+		binaryInstrumentedPath := filepath.Join(workDir, relPath)
+
+		// Permanent copy location
+		permanentPath := filepath.Join(debugDir, relPath)
+
+		// Create parent directories
+		if err := os.MkdirAll(filepath.Dir(permanentPath), 0755); err != nil {
+			fmt.Printf("⚠️  Failed to create directory for %s: %v\n", permanentPath, err)
+			continue
+		}
+
+		// Read instrumented file and copy to permanent location
+		content, err := os.ReadFile(instrumented)
+		if err != nil {
+			fmt.Printf("⚠️  Failed to read instrumented file %s: %v\n", instrumented, err)
+			continue
+		}
+		if err := os.WriteFile(permanentPath, content, 0644); err != nil {
+			fmt.Printf("⚠️  Failed to write instrumented file to %s: %v\n", permanentPath, err)
+			continue
+		}
+
+		// Get absolute path for the permanent location
+		absPermanentPath, err := filepath.Abs(permanentPath)
+		if err != nil {
+			absPermanentPath = permanentPath
+		}
+
+		// Get absolute path for debug directory
+		absDebugDir, err := filepath.Abs(debugDir)
+		if err != nil {
+			absDebugDir = debugDir
+		}
+
+		fmt.Printf("📋 Copied instrumented source: %s -> %s\n", filepath.Base(original), absPermanentPath)
+		fmt.Printf("   Binary debug path: %s\n", binaryInstrumentedPath)
+
+		mappings.Mappings = append(mappings.Mappings, SourceMapping{
+			Original:     absOriginal,
+			Instrumented: binaryInstrumentedPath, // WORK directory path from go-build.log
+			DebugCopy:    absPermanentPath,
+			DebugDir:     absDebugDir,
+		})
+	}
+
+	data, err := json.MarshalIndent(mappings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal source mappings: %w", err)
+	}
+
+	if err := os.WriteFile("source-mappings.json", data, 0644); err != nil {
+		return fmt.Errorf("failed to write source-mappings.json: %w", err)
+	}
+
+	return nil
+}
+
+// getWorkDirFromBuildLog reads the WORK directory from go-build.log
+func getWorkDirFromBuildLog() string {
+	file, err := os.Open("go-build.log")
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if workDir := extractWorkDir(line); workDir != "" {
+			return workDir
+		}
+	}
+	return ""
+}
+
+// generateSourceMappingsFromExisting generates source-mappings.json from existing build files
+// without running a new compile. It reads the WORK directory from go-build.log and
+// extracts file mappings from go-build-modified.log.
+func generateSourceMappingsFromExisting() error {
+	// Read WORK directory from go-build.log
+	workDir := getWorkDirFromBuildLog()
+	if workDir == "" {
+		return fmt.Errorf("could not find WORK directory in go-build.log")
+	}
+	fmt.Printf("📍 Found WORK directory: %s\n", workDir)
+
+	// Parse go-build-modified.log to find instrumented files
+	// Look for lines that reference the WORK directory with .go files
+	modifiedLog, err := os.Open("go-build-modified.log")
+	if err != nil {
+		return fmt.Errorf("could not open go-build-modified.log: %w", err)
+	}
+	defer modifiedLog.Close()
+
+	// Create debug directory
+	debugDir := ".otel-build/debug"
+	if err := os.MkdirAll(debugDir, 0755); err != nil {
+		return fmt.Errorf("failed to create debug directory: %w", err)
+	}
+
+	mappings := SourceMappings{
+		WorkDir:  workDir,
+		Mappings: make([]SourceMapping, 0),
+	}
+
+	// Track unique files we've already processed
+	processedFiles := make(map[string]bool)
+
+	scanner := bufio.NewScanner(modifiedLog)
+	// Increase buffer size for long lines
+	buf := make([]byte, 0, 1024*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Look for .go files in the WORK directory
+		// Pattern: files in $WORK/bXXX/src/*.go
+		if !strings.Contains(line, workDir) {
+			continue
+		}
+
+		// Extract .go file paths from the line
+		parts := strings.Fields(line)
+		for _, part := range parts {
+			if !strings.HasSuffix(part, ".go") {
+				continue
+			}
+			if !strings.HasPrefix(part, workDir) {
+				continue
+			}
+			if processedFiles[part] {
+				continue
+			}
+
+			// This is an instrumented file path
+			instrumentedPath := part
+			processedFiles[instrumentedPath] = true
+
+			// Extract relative path from WORK dir
+			relPath := strings.TrimPrefix(instrumentedPath, workDir)
+			relPath = strings.TrimPrefix(relPath, "/")
+
+			// Skip trampolines and runtime files
+			baseName := filepath.Base(relPath)
+			if baseName == "otel_trampolines.go" || baseName == "otel.runtime.go" {
+				continue
+			}
+
+			// Try to find the original file (same base name in current directory)
+			originalPath := baseName
+			if abs, err := filepath.Abs(originalPath); err == nil {
+				originalPath = abs
+			}
+
+			// Permanent copy location
+			permanentPath := filepath.Join(debugDir, relPath)
+
+			// Create parent directories
+			if err := os.MkdirAll(filepath.Dir(permanentPath), 0755); err != nil {
+				fmt.Printf("⚠️  Failed to create directory for %s: %v\n", permanentPath, err)
+				continue
+			}
+
+			// Try to copy the instrumented file from WORK dir (might still exist)
+			// or from existing debug copy
+			var content []byte
+			var copyErr error
+
+			// First try the WORK directory
+			content, copyErr = os.ReadFile(instrumentedPath)
+			if copyErr != nil {
+				// Try existing debug copy
+				content, copyErr = os.ReadFile(permanentPath)
+			}
+
+			if copyErr != nil {
+				fmt.Printf("⚠️  Could not find source for %s (WORK dir may have been cleaned)\n", baseName)
+				// Still add the mapping even without the file
+			} else {
+				if err := os.WriteFile(permanentPath, content, 0644); err != nil {
+					fmt.Printf("⚠️  Failed to write %s: %v\n", permanentPath, err)
+				}
+			}
+
+			absPermanentPath, _ := filepath.Abs(permanentPath)
+			absDebugDir, _ := filepath.Abs(debugDir)
+
+			fmt.Printf("📋 Mapping: %s -> %s\n", baseName, instrumentedPath)
+
+			mappings.Mappings = append(mappings.Mappings, SourceMapping{
+				Original:     originalPath,
+				Instrumented: instrumentedPath,
+				DebugCopy:    absPermanentPath,
+				DebugDir:     absDebugDir,
+			})
+		}
+	}
+
+	if len(mappings.Mappings) == 0 {
+		return fmt.Errorf("no instrumented files found in go-build-modified.log")
+	}
+
+	// Write source-mappings.json
+	data, err := json.MarshalIndent(mappings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal source mappings: %w", err)
+	}
+
+	if err := os.WriteFile("source-mappings.json", data, 0644); err != nil {
+		return fmt.Errorf("failed to write source-mappings.json: %w", err)
+	}
+
+	fmt.Printf("✅ Generated source-mappings.json with %d mappings\n", len(mappings.Mappings))
+	return nil
 }
 
 // instrumentFile instruments a Go file with trampoline functions and calls
@@ -744,6 +1028,16 @@ func capitalizeFirst(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// stripTrimpath removes the -trimpath argument and its value from a compile command
+// This preserves full WORK directory paths in the binary's debug info for dlv
+// Pattern: -trimpath "$WORK/bXXX=>" or -trimpath $WORK/bXXX=>
+func stripTrimpath(command string) string {
+	// Pattern matches: -trimpath "$WORK/bXXX=>" or -trimpath '$WORK/bXXX=>' or -trimpath $WORK/bXXX=>
+	// The value can be quoted with double quotes, single quotes, or unquoted
+	re := regexp.MustCompile(`\s-trimpath\s+["']?\$WORK/b\d+=>['"']?`)
+	return re.ReplaceAllString(command, " ")
 }
 
 // generateOtelRuntimeFile generates the otel.runtime.go file that imports the hooks package
@@ -1135,6 +1429,22 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 				}
 				hooksCompileInserted = true
 				fmt.Printf("           📎 Inserted hooks compile command before main\n")
+			}
+
+			// Check if this package has instrumented files
+			hasInstrumentedFiles := false
+			for originalFile := range fileReplacements {
+				if strings.Contains(modifiedCommand, originalFile) || strings.Contains(modifiedCommand, filepath.Base(originalFile)) {
+					hasInstrumentedFiles = true
+					break
+				}
+			}
+
+			// Strip -trimpath for instrumented packages so dlv can find source files
+			// This preserves full WORK directory paths in the binary's debug info
+			if hasInstrumentedFiles {
+				modifiedCommand = stripTrimpath(modifiedCommand)
+				fmt.Printf("           🔧 Stripped -trimpath for package '%s' to preserve debug paths\n", packageName)
 			}
 
 			// Replace file paths in the command - but only for Go files

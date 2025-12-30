@@ -1597,3 +1597,108 @@ body.terminal-resizing .terminal-resize-handle::before {
 .message-resize-corner:hover {
   background: linear-gradient(135deg, transparent 50%, var(--vscode-accent) 50%);
 }
+
+/* Debug Toolbar Styles */
+.debug-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #3c3c3c;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--vscode-border);
+}
+
+.debug-toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.debug-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--vscode-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.debug-button:hover {
+  background: var(--vscode-hover);
+}
+
+.debug-button:active {
+  background: var(--vscode-border);
+}
+
+.debug-continue {
+  color: #89d185;
+}
+
+.debug-step-over,
+.debug-step-into,
+.debug-step-out {
+  color: #75beff;
+}
+
+.debug-stop {
+  color: #f48771;
+}
+
+.debug-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--vscode-border);
+  margin: 0 8px;
+}
+
+.debug-status {
+  font-size: 12px;
+  color: var(--vscode-text-muted);
+}
+
+.debug-status span {
+  padding: 2px 8px;
+  background: var(--vscode-sidebar-bg);
+  border-radius: 3px;
+}
+
+/* Monaco Editor Breakpoint Styles */
+.breakpoint-glyph {
+  background: #e51400 !important;
+  border-radius: 50%;
+  width: 10px !important;
+  height: 10px !important;
+  margin-left: 5px;
+  margin-top: 4px;
+}
+
+.breakpoint-glyph-disabled {
+  background: #848484 !important;
+  border-radius: 50%;
+  width: 10px !important;
+  height: 10px !important;
+  margin-left: 5px;
+  margin-top: 4px;
+}
+
+/* Current execution line highlight */
+.current-line-decoration {
+  background: rgba(255, 238, 0, 0.15) !important;
+}
+
+.current-line-glyph {
+  background: #ffcc00 !important;
+  width: 0;
+  height: 0;
+  border-left: 8px solid #ffcc00;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  margin-left: 3px;
+  margin-top: 3px;
+}
