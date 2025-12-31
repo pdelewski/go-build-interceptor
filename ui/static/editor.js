@@ -3559,6 +3559,7 @@ function connectDebugWebSocket(port) {
         console.log('Debug WebSocket connected');
         isDebugging = true;
         document.getElementById('debugToolbar').style.display = 'flex';
+        showDebugPanel(); // Show the debug panel
         updateDebugStatus('Connected - Setting breakpoints...');
 
         // Send all existing breakpoints to dlv
@@ -3637,6 +3638,25 @@ function handleDebugMessage(msg) {
             console.log(`Breakpoint created: ${key} -> id=${bpId}`);
             breakpointIds.set(key, bpId);
         }
+
+        // Check for local variables response (ListLocalVars)
+        if (result.Variables !== undefined && msg.method === 'RPCServer.ListLocalVars') {
+            console.log('Received local variables:', result.Variables);
+            updateVariablesDisplay(result.Variables, false);
+        }
+
+        // Check for function arguments response (ListFunctionArgs)
+        if (result.Args !== undefined || (result.Variables !== undefined && msg.method === 'RPCServer.ListFunctionArgs')) {
+            const args = result.Args || result.Variables;
+            console.log('Received function arguments:', args);
+            updateVariablesDisplay(args, true);
+        }
+
+        // Check for stacktrace response
+        if (result.Locations !== undefined) {
+            console.log('Received stack trace:', result.Locations);
+            updateCallStackDisplay(result.Locations);
+        }
     }
 }
 
@@ -3648,12 +3668,14 @@ function updateDebugState(state) {
     if (state.exited || state.Exited) {
         updateDebugStatus('Program exited');
         clearCurrentLineHighlight();
+        clearDebugPanelContent();
         return;
     }
 
     if (state.Running) {
         updateDebugStatus('Running...');
         clearCurrentLineHighlight();
+        clearDebugPanelContent();
         return;
     }
 
@@ -3691,6 +3713,10 @@ function updateDebugState(state) {
 
         // Highlight current line
         highlightCurrentLine(file, line);
+
+        // Request variables and call stack when paused
+        clearDebugPanelContent();
+        requestDebugInfo();
     }
 }
 
@@ -3795,6 +3821,7 @@ function debugStop() {
 function endDebugSession() {
     isDebugging = false;
     document.getElementById('debugToolbar').style.display = 'none';
+    hideDebugPanel(); // Hide the debug panel
     clearCurrentLineHighlight();
 
     if (debugSocket) {
@@ -3829,3 +3856,224 @@ document.addEventListener('keydown', (e) => {
         debugStop();
     }
 });
+
+// ============================================
+// Debug Panel - Variables and Call Stack
+// ============================================
+
+// Toggle debug section collapse state
+function toggleDebugSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (section) {
+        section.classList.toggle('collapsed');
+    }
+}
+
+// Show the debug panel
+function showDebugPanel() {
+    const panel = document.getElementById('debugPanel');
+    if (panel) {
+        panel.classList.add('visible');
+    }
+}
+
+// Hide the debug panel
+function hideDebugPanel() {
+    const panel = document.getElementById('debugPanel');
+    if (panel) {
+        panel.classList.remove('visible');
+    }
+    // Clear content
+    clearDebugPanelContent();
+}
+
+// Clear debug panel content
+function clearDebugPanelContent() {
+    const varsContent = document.getElementById('variablesContent');
+    const stackContent = document.getElementById('callStackContent');
+    const varsCount = document.getElementById('variablesCount');
+    const stackCount = document.getElementById('callStackCount');
+
+    if (varsContent) varsContent.innerHTML = '<div class="debug-empty-state">No variables to display</div>';
+    if (stackContent) stackContent.innerHTML = '<div class="debug-empty-state">No call stack to display</div>';
+    if (varsCount) varsCount.textContent = '0';
+    if (stackCount) stackCount.textContent = '0';
+}
+
+// Request variables and stack trace from debugger
+function requestDebugInfo() {
+    if (!isDebugging || !debugSocket || debugSocket.readyState !== WebSocket.OPEN) {
+        return;
+    }
+
+    // Request local variables
+    sendDebugCommand({ command: 'listLocalVars' });
+
+    // Request function arguments
+    sendDebugCommand({ command: 'listFunctionArgs' });
+
+    // Request stack trace
+    sendDebugCommand({ command: 'stacktrace' });
+}
+
+// Update variables display
+function updateVariablesDisplay(variables, isArgs = false) {
+    const varsContent = document.getElementById('variablesContent');
+    const varsCount = document.getElementById('variablesCount');
+    if (!varsContent) return;
+
+    // If this is the first update, clear the empty state
+    if (varsContent.querySelector('.debug-empty-state')) {
+        varsContent.innerHTML = '';
+    }
+
+    // Add variables to the display
+    if (Array.isArray(variables) && variables.length > 0) {
+        variables.forEach(v => {
+            const varEl = createVariableElement(v);
+            varsContent.appendChild(varEl);
+        });
+
+        // Update count
+        if (varsCount) {
+            const currentCount = parseInt(varsCount.textContent) || 0;
+            varsCount.textContent = currentCount + variables.length;
+        }
+    }
+}
+
+// Create a DOM element for a variable
+function createVariableElement(variable) {
+    const div = document.createElement('div');
+    div.className = 'debug-variable';
+
+    const name = variable.name || variable.Name || 'unknown';
+    const type = variable.type || variable.Type || '';
+    const value = formatVariableValue(variable);
+    const valueClass = getValueClass(variable);
+
+    div.innerHTML = `
+        <span class="debug-variable-name">${escapeHtml(name)}</span>
+        <span class="debug-variable-type">${escapeHtml(type)}</span>
+        <span class="debug-variable-value ${valueClass}">${escapeHtml(value)}</span>
+    `;
+
+    return div;
+}
+
+// Format variable value for display
+function formatVariableValue(variable) {
+    const value = variable.value || variable.Value;
+    const kind = variable.kind || variable.Kind;
+
+    if (value === undefined || value === null) {
+        return 'nil';
+    }
+
+    // Handle string values
+    if (typeof value === 'string') {
+        // Check for pointer/address values
+        if (value.startsWith('0x') || value.startsWith('*')) {
+            return value;
+        }
+        return value;
+    }
+
+    // Handle numeric values
+    if (typeof value === 'number') {
+        return value.toString();
+    }
+
+    // Handle boolean values
+    if (typeof value === 'boolean') {
+        return value.toString();
+    }
+
+    // Handle objects (structs, etc.)
+    if (typeof value === 'object') {
+        return JSON.stringify(value);
+    }
+
+    return String(value);
+}
+
+// Get CSS class for value type
+function getValueClass(variable) {
+    const kind = variable.kind || variable.Kind;
+    const value = variable.value || variable.Value;
+
+    // Numeric kinds in dlv: int, int8-64, uint, uint8-64, float32, float64, complex64, complex128
+    if (kind >= 2 && kind <= 16) {
+        return 'number';
+    }
+
+    // Boolean kind
+    if (kind === 1) {
+        return 'bool';
+    }
+
+    // Nil/invalid
+    if (value === undefined || value === null || value === 'nil') {
+        return 'nil';
+    }
+
+    return '';
+}
+
+// Update call stack display
+function updateCallStackDisplay(frames) {
+    const stackContent = document.getElementById('callStackContent');
+    const stackCount = document.getElementById('callStackCount');
+    if (!stackContent) return;
+
+    stackContent.innerHTML = '';
+
+    if (!Array.isArray(frames) || frames.length === 0) {
+        stackContent.innerHTML = '<div class="debug-empty-state">No call stack to display</div>';
+        if (stackCount) stackCount.textContent = '0';
+        return;
+    }
+
+    frames.forEach((frame, index) => {
+        const frameEl = createStackFrameElement(frame, index);
+        stackContent.appendChild(frameEl);
+    });
+
+    if (stackCount) {
+        stackCount.textContent = frames.length;
+    }
+}
+
+// Create a DOM element for a stack frame
+function createStackFrameElement(frame, index) {
+    const div = document.createElement('div');
+    div.className = 'debug-stack-frame' + (index === 0 ? ' active' : '');
+
+    const funcName = frame.function?.name || frame.Function?.Name || 'unknown';
+    const file = frame.file || frame.File || '';
+    const line = frame.line || frame.Line || 0;
+    const fileName = file.split('/').pop();
+
+    div.innerHTML = `
+        <span class="debug-stack-frame-function">${escapeHtml(funcName)}</span>
+        <span class="debug-stack-frame-location">
+            <span class="file">${escapeHtml(fileName)}</span>:<span class="line">${line}</span>
+        </span>
+    `;
+
+    // Click to navigate to frame location
+    div.addEventListener('click', () => {
+        if (file && line) {
+            highlightCurrentLine(file, line);
+        }
+    });
+
+    return div;
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
