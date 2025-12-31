@@ -1702,3 +1702,247 @@ body.terminal-resizing .terminal-resize-handle::before {
   margin-left: 3px;
   margin-top: 3px;
 }
+
+/* Debug Panel - Right sidebar for Variables and Call Stack */
+.debug-panel {
+  width: 300px;
+  min-width: 200px;
+  max-width: 500px;
+  background: var(--vscode-sidebar-bg);
+  border-left: 1px solid var(--vscode-border);
+  display: none;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.debug-panel.visible {
+  display: flex;
+}
+
+.debug-panel-header {
+  padding: 8px 12px;
+  background: var(--vscode-sidebar-bg);
+  border-bottom: 1px solid var(--vscode-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 35px;
+}
+
+.debug-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.debug-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Collapsible Debug Section */
+.debug-section {
+  border-bottom: 1px solid var(--vscode-border);
+}
+
+.debug-section-header {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--vscode-tab-bg);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.debug-section-header:hover {
+  background: var(--vscode-hover);
+}
+
+.debug-section-chevron {
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  color: var(--vscode-text-muted);
+  transition: transform 0.15s;
+}
+
+.debug-section.collapsed .debug-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.debug-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-text);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.debug-section-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--vscode-text-muted);
+  background: var(--vscode-border);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.debug-section-content {
+  padding: 4px 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.debug-section.collapsed .debug-section-content {
+  display: none;
+}
+
+/* Variable Item */
+.debug-variable {
+  display: flex;
+  align-items: flex-start;
+  padding: 3px 12px 3px 24px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  cursor: default;
+  transition: background 0.1s;
+}
+
+.debug-variable:hover {
+  background: var(--vscode-hover);
+}
+
+.debug-variable-name {
+  color: #9cdcfe;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.debug-variable-type {
+  color: #4ec9b0;
+  margin-right: 8px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.debug-variable-value {
+  color: #ce9178;
+  word-break: break-all;
+  flex: 1;
+}
+
+.debug-variable-value.number {
+  color: #b5cea8;
+}
+
+.debug-variable-value.bool {
+  color: #569cd6;
+}
+
+.debug-variable-value.nil {
+  color: #569cd6;
+  font-style: italic;
+}
+
+/* Expandable variable (struct/slice/map) */
+.debug-variable.expandable {
+  cursor: pointer;
+}
+
+.debug-variable.expandable::before {
+  content: '▶';
+  font-size: 8px;
+  margin-right: 4px;
+  color: var(--vscode-text-muted);
+  transition: transform 0.15s;
+}
+
+.debug-variable.expandable.expanded::before {
+  transform: rotate(90deg);
+}
+
+.debug-variable-children {
+  display: none;
+  padding-left: 16px;
+}
+
+.debug-variable.expanded + .debug-variable-children {
+  display: block;
+}
+
+/* Stack Frame Item */
+.debug-stack-frame {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px 4px 24px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-left: 2px solid transparent;
+}
+
+.debug-stack-frame:hover {
+  background: var(--vscode-hover);
+}
+
+.debug-stack-frame.active {
+  background: rgba(0, 122, 204, 0.2);
+  border-left-color: var(--vscode-accent);
+}
+
+.debug-stack-frame-function {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: #dcdcaa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.debug-stack-frame-location {
+  font-size: 11px;
+  color: var(--vscode-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.debug-stack-frame-location .file {
+  color: #4ec9b0;
+}
+
+.debug-stack-frame-location .line {
+  color: #b5cea8;
+}
+
+/* Empty state */
+.debug-empty-state {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--vscode-text-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Debug panel resize handle */
+.debug-panel-resize {
+  position: absolute;
+  top: 0;
+  left: -2px;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 10;
+  transition: background-color 0.1s;
+}
+
+.debug-panel-resize:hover {
+  background: var(--vscode-accent);
+}

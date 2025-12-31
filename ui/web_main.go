@@ -645,6 +645,43 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
                 </div>
             </div>
         </div>
+
+        <!-- Debug Panel - Variables and Call Stack (visible only during debug) -->
+        <div id="debugPanel" class="debug-panel">
+            <div class="debug-panel-resize" id="debugPanelResize"></div>
+            <div class="debug-panel-header">
+                <span class="debug-panel-title">Debug</span>
+            </div>
+            <div class="debug-panel-content">
+                <!-- Variables Section -->
+                <div class="debug-section" id="variablesSection">
+                    <div class="debug-section-header" onclick="toggleDebugSection('variablesSection')">
+                        <svg class="debug-section-chevron" viewBox="0 0 16 16">
+                            <path fill="currentColor" d="M6 4l4 4-4 4V4z"/>
+                        </svg>
+                        <span class="debug-section-title">Variables</span>
+                        <span class="debug-section-count" id="variablesCount">0</span>
+                    </div>
+                    <div class="debug-section-content" id="variablesContent">
+                        <div class="debug-empty-state">No variables to display</div>
+                    </div>
+                </div>
+
+                <!-- Call Stack Section -->
+                <div class="debug-section" id="callStackSection">
+                    <div class="debug-section-header" onclick="toggleDebugSection('callStackSection')">
+                        <svg class="debug-section-chevron" viewBox="0 0 16 16">
+                            <path fill="currentColor" d="M6 4l4 4-4 4V4z"/>
+                        </svg>
+                        <span class="debug-section-title">Call Stack</span>
+                        <span class="debug-section-count" id="callStackCount">0</span>
+                    </div>
+                    <div class="debug-section-content" id="callStackContent">
+                        <div class="debug-empty-state">No call stack to display</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Terminal Panel -->
@@ -1539,6 +1576,7 @@ type DlvResponse struct {
 }
 
 var dlvRequestID = 0
+var dlvRequestMethods = make(map[int]string) // Track request ID -> method name
 
 // translateFilePaths recursively translates file paths in a JSON structure
 // from instrumented paths back to original paths
@@ -1720,10 +1758,15 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 
 				log.Printf("Parsed dlv response - ID: %d, Error: %v\n", dlvResp.ID, dlvResp.Error)
 
+				// Get the method name for this request ID
+				method := dlvRequestMethods[dlvResp.ID]
+				delete(dlvRequestMethods, dlvResp.ID) // Clean up
+
 				// Forward to browser
 				conn.WriteJSON(map[string]interface{}{
 					"type":   "response",
 					"id":     dlvResp.ID,
+					"method": method,
 					"result": result,
 					"error":  dlvResp.Error,
 				})
@@ -1794,6 +1837,59 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "state":
 			dlvReq.Method = "RPCServer.State"
 			dlvReq.Params = []interface{}{map[string]interface{}{}}
+		case "listLocalVars":
+			// List local variables in current scope
+			dlvReq.Method = "RPCServer.ListLocalVars"
+			dlvReq.Params = []interface{}{
+				map[string]interface{}{
+					"Scope": map[string]interface{}{
+						"GoroutineID": -1, // Current goroutine
+						"Frame":       0,  // Current frame
+					},
+					"Cfg": map[string]interface{}{
+						"FollowPointers":     true,
+						"MaxVariableRecurse": 1,
+						"MaxStringLen":       64,
+						"MaxArrayValues":     64,
+						"MaxStructFields":    -1,
+					},
+				},
+			}
+		case "listFunctionArgs":
+			// List function arguments
+			dlvReq.Method = "RPCServer.ListFunctionArgs"
+			dlvReq.Params = []interface{}{
+				map[string]interface{}{
+					"Scope": map[string]interface{}{
+						"GoroutineID": -1,
+						"Frame":       0,
+					},
+					"Cfg": map[string]interface{}{
+						"FollowPointers":     true,
+						"MaxVariableRecurse": 1,
+						"MaxStringLen":       64,
+						"MaxArrayValues":     64,
+						"MaxStructFields":    -1,
+					},
+				},
+			}
+		case "stacktrace":
+			// Get call stack
+			dlvReq.Method = "RPCServer.Stacktrace"
+			dlvReq.Params = []interface{}{
+				map[string]interface{}{
+					"Id":    -1, // Current goroutine
+					"Depth": 50, // Max stack depth
+					"Full":  false,
+					"Cfg": map[string]interface{}{
+						"FollowPointers":     false,
+						"MaxVariableRecurse": 0,
+						"MaxStringLen":       64,
+						"MaxArrayValues":     0,
+						"MaxStructFields":    0,
+					},
+				},
+			}
 		case "stop":
 			// Detach from the process
 			dlvReq.Method = "RPCServer.Detach"
@@ -1802,6 +1898,9 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Unknown debug command: %s\n", cmd.Command)
 			continue
 		}
+
+		// Track the method for this request ID
+		dlvRequestMethods[dlvReq.ID] = dlvReq.Method
 
 		// Send to dlv
 		reqBytes, _ := json.Marshal(dlvReq)
