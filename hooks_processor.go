@@ -667,8 +667,8 @@ func writeGeneratedFileToPackage(genFile GeneratedFileDefinition, workDir string
 		return "", fmt.Errorf("missing work directory or build ID")
 	}
 
-	// Create the target directory: $WORK/buildID/src/
-	targetDir := filepath.Join(workDir, buildID, "src")
+	// Create the target directory: $WORK/buildID/
+	targetDir := filepath.Join(workDir, buildID)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
 	}
@@ -896,7 +896,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 				copyKey := packageName + ":" + file
 				if !copiedFiles[copyKey] {
 					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
-						instrumentedFilePath := filepath.Join(workDir, pkgInfo.BuildID, "src", filepath.Base(file))
+						instrumentedFilePath := filepath.Join(workDir, pkgInfo.BuildID, filepath.Base(file))
 						if err := copyAndInstrumentFileOnly(file, workDir, pkgInfo.BuildID, packageName, hooks, hooksImportPath); err != nil {
 							fmt.Printf("           ⚠️  Failed to copy and instrument file: %v\n", err)
 						} else {
@@ -908,7 +908,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 								// Track the trampolines file for this package - only for before_after hooks
 								if fileNeedsTrampolines {
-									trampolinesPath := filepath.Join(workDir, pkgInfo.BuildID, "src", "otel_trampolines.go")
+									trampolinesPath := filepath.Join(workDir, pkgInfo.BuildID, "otel_trampolines.go")
 									trampolineFiles[packageName] = trampolinesPath
 								}
 							}
@@ -947,7 +947,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 			// Apply struct modification
 			if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" && workDir != "" {
-				targetDir := filepath.Join(workDir, pkgInfo.BuildID, "src")
+				targetDir := filepath.Join(workDir, pkgInfo.BuildID)
 				if err := os.MkdirAll(targetDir, 0755); err != nil {
 					fmt.Printf("     ⚠️  Failed to create target dir: %v\n", err)
 					continue
@@ -1025,7 +1025,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 	// Generate otel.runtime.go for main package if we have matches
 	var otelRuntimeFile string
 	if len(fileReplacements) > 0 && workDir != "" && mainBuildID != "" {
-		runtimeDir := filepath.Join(workDir, mainBuildID, "src")
+		runtimeDir := filepath.Join(workDir, mainBuildID)
 		if err := os.MkdirAll(runtimeDir, 0755); err == nil {
 			var err error
 			otelRuntimeFile, err = generateOtelRuntimeFile(runtimeDir, hooksImportPath)
@@ -2003,8 +2003,8 @@ func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string
 		return fmt.Errorf("missing work directory or build ID")
 	}
 
-	// Create the target directory: $WORK/buildID/src/
-	targetDir := filepath.Join(workDir, buildID, "src")
+	// Create the target directory: $WORK/buildID/
+	targetDir := filepath.Join(workDir, buildID)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
 	}
