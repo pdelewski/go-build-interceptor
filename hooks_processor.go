@@ -1022,9 +1022,10 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 		}
 	}
 
-	// Generate otel.runtime.go for main package if we have matches
+	// Generate otel.runtime.go for main package only if we have before_after or both hooks
+	// (trampolineFiles is only populated for before_after hooks that need go:linkname to hooks package)
 	var otelRuntimeFile string
-	if len(fileReplacements) > 0 && workDir != "" && mainBuildID != "" {
+	if len(trampolineFiles) > 0 && workDir != "" && mainBuildID != "" {
 		runtimeDir := filepath.Join(workDir, mainBuildID)
 		if err := os.MkdirAll(runtimeDir, 0755); err == nil {
 			var err error
@@ -2033,9 +2034,11 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 	defer file.Close()
 
 	// Generate compile command for generated_hooks package
+	// Only needed when we have before_after or both hooks (trampolineFiles is not empty)
+	// For rewrite-only hooks, we don't need to compile the hooks package
 	hooksCompileCmd := ""
 	hooksPkgFile := ""
-	if hooksFile != "" && workDir != "" {
+	if hooksFile != "" && workDir != "" && len(trampolineFiles) > 0 {
 		hooksCompileCmd, hooksPkgFile = generateHooksCompileCommand(commands, hooksFile, hooksImportPath, workDir)
 		if hooksCompileCmd != "" {
 			fmt.Printf("📦 Generated compile command for hooks package\n")
