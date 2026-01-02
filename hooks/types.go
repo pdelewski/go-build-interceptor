@@ -36,3 +36,23 @@ type HookContext interface {
 	GetFuncName() string
 	GetPackageName() string
 }
+
+// StructField defines a field to be added to a struct
+type StructField struct {
+	Name string // Field name
+	Type string // Field type
+}
+
+// StructModification defines a modification to a struct in a package
+type StructModification struct {
+	Package    string        // Target package
+	StructName string        // Name of the struct to modify
+	AddFields  []StructField // Fields to add
+}
+
+// GeneratedFile defines a file to be generated into a package
+type GeneratedFile struct {
+	Package  string // Target package
+	FileName string // Name of the file to generate
+	Content  string // The Go source code content
+}
