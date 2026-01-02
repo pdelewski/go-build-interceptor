@@ -25,7 +25,7 @@ type Config struct {
 	WorkDir         bool
 	PackPackagePath bool
 	Compile         bool
-	HooksFile       string
+	HooksFiles      []string // Multiple hooks files (comma-separated or multiple --compile flags)
 	SourceMappings  bool
 }
 

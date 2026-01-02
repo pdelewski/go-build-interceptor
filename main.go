@@ -236,10 +236,17 @@ func (p *Processor) executeMode() error {
 		}
 	case "compile":
 		fmt.Println("=== Compile Mode ===")
-		if p.config.HooksFile == "" {
+		if len(p.config.HooksFiles) == 0 {
 			fmt.Println("Error: No hooks file specified. Use --compile <hooks_file> or -c <hooks_file>")
+			fmt.Println("       Multiple files can be specified: --compile file1.go,file2.go or --compile file1.go --compile file2.go")
 			break
 		}
+
+		fmt.Printf("Using %d hooks file(s):\n", len(p.config.HooksFiles))
+		for _, hf := range p.config.HooksFiles {
+			fmt.Printf("  - %s\n", hf)
+		}
+		fmt.Println()
 
 		// First capture the build log like --json does
 		fmt.Println("Capturing build output...")
@@ -259,8 +266,8 @@ func (p *Processor) executeMode() error {
 		commands = p.parser.GetCommands()
 		fmt.Printf("Parsed %d commands from captured build\n\n", len(commands))
 
-		// Process with hooks
-		if err := processCompileWithHooks(commands, p.config.HooksFile); err != nil {
+		// Process with hooks (multiple files)
+		if err := processCompileWithMultipleHooks(commands, p.config.HooksFiles); err != nil {
 			fmt.Printf("Error in compile mode: %v\n", err)
 		}
 	case "workdir":

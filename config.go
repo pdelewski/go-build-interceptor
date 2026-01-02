@@ -2,11 +2,39 @@ package main
 
 import (
 	"flag"
+	"strings"
 )
+
+// stringSliceFlag is a custom flag type that allows multiple values
+// Either comma-separated or multiple flags with the same name
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	// Support comma-separated values
+	if strings.Contains(value, ",") {
+		parts := strings.Split(value, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				*s = append(*s, part)
+			}
+		}
+	} else {
+		*s = append(*s, value)
+	}
+	return nil
+}
 
 // ParseFlags parses command line flags and returns a Config struct
 func ParseFlags() *Config {
 	config := &Config{}
+
+	// Custom flag for multiple hooks files
+	var hooksFiles stringSliceFlag
 
 	flag.StringVar(&config.LogFile, "log", "go-build.log", "Path to the log file to replay")
 	flag.BoolVar(&config.DryRun, "dry-run", false, "Show commands without executing them")
@@ -22,14 +50,17 @@ func ParseFlags() *Config {
 	flag.BoolVar(&config.CallGraph, "callgraph", false, "Generate and display call graph from Go files in compile commands")
 	flag.BoolVar(&config.WorkDir, "workdir", false, "Check first command and extract WORK directory, then dump all directories and files there")
 	flag.BoolVar(&config.PackPackagePath, "pack-packagepath", false, "Extract and display package names with their source paths from compile commands")
-	flag.StringVar(&config.HooksFile, "compile", "", "Parse hooks file and match against functions in compile commands")
-	flag.StringVar(&config.HooksFile, "c", "", "Parse hooks file and match against functions in compile commands (short for --compile)")
+	flag.Var(&hooksFiles, "compile", "Parse hooks file(s) and match against functions in compile commands (can be specified multiple times or comma-separated)")
+	flag.Var(&hooksFiles, "c", "Parse hooks file(s) and match against functions in compile commands (short for --compile)")
 	flag.BoolVar(&config.SourceMappings, "source-mappings", false, "Generate source-mappings.json from existing go-build.log (for dlv debugger)")
 
 	flag.Parse()
 
-	// If HooksFile is provided, set Compile to true
-	if config.HooksFile != "" {
+	// Copy hooks files to config
+	config.HooksFiles = hooksFiles
+
+	// If HooksFiles is provided, set Compile to true
+	if len(config.HooksFiles) > 0 {
 		config.Compile = true
 	}
 	return config

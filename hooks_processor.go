@@ -751,6 +751,294 @@ func matchFunctionWithHooks(packageName string, funcInfo *FunctionInfo, hooks []
 	return nil
 }
 
+// processCompileWithMultipleHooks merges hooks from multiple files and processes them in one pass
+func processCompileWithMultipleHooks(commands []Command, hooksFiles []string) error {
+	if len(hooksFiles) == 0 {
+		return fmt.Errorf("no hooks files provided")
+	}
+
+	// If only one file, use the original function
+	if len(hooksFiles) == 1 {
+		return processCompileWithHooks(commands, hooksFiles[0])
+	}
+
+	// Merge hooks from all files
+	var allHooks []HookDefinition
+	var allStructMods []StructModificationDefinition
+	var allGeneratedFiles []GeneratedFileDefinition
+	var allHooksFiles []string // Track all hooks file paths for compilation
+
+	fmt.Println("=== Merging hooks from multiple files ===")
+
+	for _, hooksFile := range hooksFiles {
+		fmt.Printf("\n📁 Loading: %s\n", filepath.Base(hooksFile))
+
+		// Parse hooks
+		hooks, err := parseHooksFile(hooksFile)
+		if err != nil {
+			fmt.Printf("   ⚠️  %v\n", err)
+			hooks = []HookDefinition{}
+		} else {
+			fmt.Printf("   Hooks: %d\n", len(hooks))
+		}
+		hooks = parseRewriteFunctionsFromFile(hooksFile, hooks)
+		allHooks = append(allHooks, hooks...)
+
+		// Parse struct modifications
+		structMods := parseStructModificationsFromHooksFile(hooksFile)
+		if len(structMods) > 0 {
+			fmt.Printf("   Struct modifications: %d\n", len(structMods))
+			allStructMods = append(allStructMods, structMods...)
+		}
+
+		// Parse generated files
+		generatedFiles := parseGeneratedFilesFromHooksFile(hooksFile)
+		if len(generatedFiles) > 0 {
+			fmt.Printf("   Generated files: %d\n", len(generatedFiles))
+			allGeneratedFiles = append(allGeneratedFiles, generatedFiles...)
+		}
+
+		allHooksFiles = append(allHooksFiles, hooksFile)
+	}
+
+	fmt.Printf("\n=== Merged totals ===\n")
+	fmt.Printf("Total hooks: %d\n", len(allHooks))
+	fmt.Printf("Total struct modifications: %d\n", len(allStructMods))
+	fmt.Printf("Total generated files: %d\n", len(allGeneratedFiles))
+
+	// Use the first hooks file's directory for import path (all hooks files should be in same package)
+	hooksImportPath, err := getHooksImportPath(hooksFiles[0])
+	if err != nil {
+		fmt.Printf("⚠️  Warning: Could not determine hooks import path: %v\n", err)
+		hooksImportPath = "generated_hooks"
+	} else {
+		fmt.Printf("Hooks import path: %s\n", hooksImportPath)
+	}
+
+	// Process with merged data
+	return processCompileWithHooksInternal(commands, allHooks, allStructMods, allGeneratedFiles,
+		allHooksFiles, hooksImportPath)
+}
+
+// processCompileWithHooksInternal is the internal implementation with pre-parsed data
+func processCompileWithHooksInternal(commands []Command, hooks []HookDefinition,
+	structMods []StructModificationDefinition, generatedFiles []GeneratedFileDefinition,
+	hooksFiles []string, hooksImportPath string) error {
+
+	fmt.Printf("\n=== Compile Mode with Hooks ===\n")
+	fmt.Printf("Processing %d hook definitions\n\n", len(hooks))
+
+	// Get package path information using existing functionality
+	packageInfo := extractPackagePathInfo(commands)
+
+	// Extract work directory
+	workDir := extractWorkDirFromCommands(commands)
+	if workDir != "" {
+		fmt.Printf("Work directory: %s\n", workDir)
+	}
+
+	// Display loaded hooks
+	fmt.Println("Hook Definitions:")
+	for _, hook := range hooks {
+		fmt.Printf("  - Package: %s, Function: %s", hook.Package, hook.Function)
+		if hook.Receiver != "" {
+			fmt.Printf(", Receiver: %s", hook.Receiver)
+		}
+		fmt.Printf(" [%s]\n", hook.Type)
+	}
+	fmt.Println()
+
+	compileCount := 0
+	matchCount := 0
+	packagesWithMatches := make(map[string]bool)
+	copiedFiles := make(map[string]bool)
+	fileReplacements := make(map[string]string)
+	trampolineFiles := make(map[string]string)
+	generatedFilePaths := make(map[string][]string)
+	structModApplied := make(map[string]bool)
+	packagesWithStructMods := make(map[string]bool)
+
+	// Process each compile command
+	for cmdIdx, cmd := range commands {
+		if !isCompileCommand(&cmd) {
+			continue
+		}
+
+		compileCount++
+		packageName := extractPackageName(&cmd)
+		files := extractPackFiles(&cmd)
+
+		if packageName == "" || len(files) == 0 {
+			continue
+		}
+
+		fmt.Printf("Command %d: Package '%s' with %d files\n", cmdIdx+1, packageName, len(files))
+
+		packageHasMatches := false
+
+		// Process each Go file
+		for _, file := range files {
+			if !strings.HasSuffix(file, ".go") {
+				continue
+			}
+
+			functions, err := extractFunctionsFromGoFile(file)
+			if err != nil {
+				fmt.Printf("  Error parsing %s: %v\n", file, err)
+				continue
+			}
+
+			fileHasMatches := false
+			fileNeedsTrampolines := false
+			fileNeedsRewrite := false
+
+			for _, fn := range functions {
+				if match := matchFunctionWithHooks(packageName, &fn, hooks); match != nil {
+					matchCount++
+					packageHasMatches = true
+					fileHasMatches = true
+					fmt.Printf("  ✓ MATCH: %s:%s", filepath.Base(file), fn.Name)
+					if fn.Receiver != "" {
+						fmt.Printf(" (receiver: %s)", fn.Receiver)
+					}
+					fmt.Printf(" -> Hook type: %s\n", match.Type)
+
+					switch match.Type {
+					case "before_after":
+						fileNeedsTrampolines = true
+					case "rewrite":
+						fileNeedsRewrite = true
+					case "both":
+						fileNeedsTrampolines = true
+						fileNeedsRewrite = true
+					}
+				}
+			}
+
+			if fileHasMatches && (fileNeedsTrampolines || fileNeedsRewrite) && workDir != "" {
+				copyKey := packageName + ":" + file
+				if !copiedFiles[copyKey] {
+					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
+						instrumentedFilePath := filepath.Join(workDir, pkgInfo.BuildID, filepath.Base(file))
+						if err := copyAndInstrumentFileOnly(file, workDir, pkgInfo.BuildID, packageName, hooks, hooksImportPath); err != nil {
+							fmt.Printf("           ⚠️  Failed to copy and instrument file: %v\n", err)
+						} else {
+							copiedFiles[copyKey] = true
+							if strings.HasSuffix(file, ".go") {
+								fileReplacements[file] = instrumentedFilePath
+								if fileNeedsTrampolines {
+									trampolinesPath := filepath.Join(workDir, pkgInfo.BuildID, "otel_trampolines.go")
+									trampolineFiles[packageName] = trampolinesPath
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if packageHasMatches {
+			packagesWithMatches[packageName] = true
+		}
+
+		// Check for struct modifications
+		for _, mod := range structMods {
+			if mod.Package != packageName {
+				continue
+			}
+			modKey := mod.Package + ":" + mod.StructName
+			if structModApplied[modKey] {
+				continue
+			}
+
+			structFile, err := findStructDefinitionFile(files, mod.StructName)
+			if err != nil {
+				continue
+			}
+
+			if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" && workDir != "" {
+				targetDir := filepath.Join(workDir, pkgInfo.BuildID)
+				os.MkdirAll(targetDir, 0755)
+				targetFile := filepath.Join(targetDir, filepath.Base(structFile))
+				if err := applyStructModification(structFile, targetFile, mod); err == nil {
+					structModApplied[modKey] = true
+					packagesWithStructMods[packageName] = true
+					fileReplacements[structFile] = targetFile
+				}
+			}
+		}
+
+		// Check for generated files
+		for _, genFile := range generatedFiles {
+			if genFile.Package != packageName {
+				continue
+			}
+			if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" && workDir != "" {
+				genFilePath, err := writeGeneratedFileToPackage(genFile, workDir, pkgInfo.BuildID)
+				if err == nil {
+					generatedFilePaths[packageName] = append(generatedFilePaths[packageName], genFilePath)
+					packagesWithMatches[packageName] = true
+				}
+			}
+		}
+	}
+
+	_ = packagesWithStructMods
+
+	fmt.Printf("\nSummary: Processed %d compile commands, found %d hook matches in %d packages\n",
+		compileCount, matchCount, len(packagesWithMatches))
+
+	// Find main package
+	var mainPackageInfo *PackagePathInfo
+	var mainBuildID string
+	for _, cmd := range commands {
+		if isCompileCommand(&cmd) {
+			pkgName := extractPackageName(&cmd)
+			if pkgName == "main" {
+				if info, exists := packageInfo[pkgName]; exists {
+					mainPackageInfo = &info
+					mainBuildID = info.BuildID
+				}
+				break
+			}
+		}
+	}
+
+	// Generate otel.runtime.go only for before_after hooks
+	var otelRuntimeFile string
+	if len(trampolineFiles) > 0 && workDir != "" && mainBuildID != "" {
+		runtimeDir := filepath.Join(workDir, mainBuildID)
+		os.MkdirAll(runtimeDir, 0755)
+		otelRuntimeFile, _ = generateOtelRuntimeFile(runtimeDir, hooksImportPath)
+	}
+
+	// Generate modified build log - pass all hooks files for compilation
+	if len(fileReplacements) > 0 || len(generatedFilePaths) > 0 {
+		// Use first hooks file for now (all should be in same package)
+		hooksFile := ""
+		if len(hooksFiles) > 0 {
+			hooksFile = hooksFiles[0]
+		}
+		if err := generateModifiedBuildLogMultipleHooks(commands, fileReplacements, trampolineFiles,
+			generatedFilePaths, hooksImportPath, workDir, hooksFiles, otelRuntimeFile, mainPackageInfo); err != nil {
+			fmt.Printf("⚠️  Failed to generate modified build log: %v\n", err)
+		} else {
+			fmt.Printf("\n📄 Generated modified build log: go-build-modified.log\n")
+			saveSourceMappings(fileReplacements, workDir)
+
+			fmt.Printf("\n🚀 Executing commands from modified build log...\n")
+			if err := executeModifiedBuildLogWithParser("go-build-modified.log"); err != nil {
+				fmt.Printf("⚠️  Failed to execute modified build log: %v\n", err)
+			} else {
+				fmt.Printf("✅ Successfully executed all commands from modified build log\n")
+			}
+		}
+		_ = hooksFile
+	}
+
+	return nil
+}
+
 // processCompileWithHooks processes compile commands and matches them against hooks
 func processCompileWithHooks(commands []Command, hooksFile string) error {
 	// Parse the hooks file
@@ -2177,6 +2465,210 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 	}
 
 	return nil
+}
+
+// generateModifiedBuildLogMultipleHooks generates a modified build log that compiles all hooks files together
+func generateModifiedBuildLogMultipleHooks(commands []Command, fileReplacements map[string]string, trampolineFiles map[string]string, generatedFilePaths map[string][]string, hooksImportPath string, workDir string, hooksFiles []string, otelRuntimeFile string, mainPackageInfo *PackagePathInfo) error {
+	outputFile := "go-build-modified.log"
+
+	file, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create modified build log: %w", err)
+	}
+	defer file.Close()
+
+	// Generate compile command for hooks package (compiling all hooks files together)
+	// Only needed when we have before_after or both hooks (trampolineFiles is not empty)
+	hooksCompileCmd := ""
+	hooksPkgFile := ""
+	if len(hooksFiles) > 0 && workDir != "" && len(trampolineFiles) > 0 {
+		hooksCompileCmd, hooksPkgFile = generateHooksCompileCommandMultiple(commands, hooksFiles, hooksImportPath, workDir)
+		if hooksCompileCmd != "" {
+			fmt.Printf("📦 Generated compile command for hooks package (multiple files)\n")
+		}
+	}
+
+	// Determine the main package's buildID
+	mainBuildID := ""
+	if mainPackageInfo != nil {
+		mainBuildID = mainPackageInfo.BuildID
+	}
+
+	hooksCompileInserted := false
+
+	for _, cmd := range commands {
+		modifiedCommand := cmd.Raw
+
+		// Check if this is an importcfg heredoc for main package
+		if cmd.IsMultiline && mainBuildID != "" && hooksPkgFile != "" {
+			if strings.Contains(modifiedCommand, "/"+mainBuildID+"/importcfg") &&
+				strings.Contains(modifiedCommand, "<< 'EOF'") {
+				hooksPackageLine := fmt.Sprintf("packagefile %s=%s", hooksImportPath, hooksPkgFile)
+				hooksLibPkgFile := filepath.Join(workDir, "hooks_lib", "_pkg_.a")
+				hooksLibPackageLine := fmt.Sprintf("packagefile github.com/pdelewski/go-build-interceptor/hooks=%s", hooksLibPkgFile)
+
+				if strings.Contains(modifiedCommand, "importcfg.link") {
+					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\n"+hooksLibPackageLine+"\nEOF\n", 1)
+				} else {
+					modifiedCommand = strings.Replace(modifiedCommand, "\nEOF\n", "\n"+hooksPackageLine+"\n"+hooksLibPackageLine+"\nEOF\n", 1)
+				}
+			}
+		}
+
+		if isCompileCommand(&cmd) {
+			packageName := extractPackageName(&cmd)
+			needsTrampolineFile := false
+
+			// Insert hooks compile command before main package
+			if packageName == "main" && hooksCompileCmd != "" && !hooksCompileInserted {
+				if _, err := fmt.Fprintf(file, "%s\n", hooksCompileCmd); err != nil {
+					return fmt.Errorf("failed to write hooks compile command: %w", err)
+				}
+				hooksCompileInserted = true
+			}
+
+			hasInstrumentedFiles := false
+			for originalFile := range fileReplacements {
+				if strings.Contains(modifiedCommand, originalFile) || strings.Contains(modifiedCommand, filepath.Base(originalFile)) {
+					hasInstrumentedFiles = true
+					break
+				}
+			}
+
+			if hasInstrumentedFiles {
+				modifiedCommand = stripTrimpath(modifiedCommand)
+			}
+
+			for originalFile, instrumentedFile := range fileReplacements {
+				if !strings.HasSuffix(originalFile, ".go") {
+					continue
+				}
+				if strings.Contains(modifiedCommand, originalFile) {
+					needsTrampolineFile = true
+				}
+				modifiedCommand = strings.ReplaceAll(modifiedCommand, originalFile, instrumentedFile)
+				originalBasename := filepath.Base(originalFile)
+				instrumentedBasename := filepath.Base(instrumentedFile)
+				if originalBasename != instrumentedBasename {
+					modifiedCommand = strings.ReplaceAll(modifiedCommand, originalBasename, instrumentedFile)
+				} else {
+					modifiedCommand = strings.ReplaceAll(modifiedCommand, " "+originalBasename+" ", " "+instrumentedFile+" ")
+					modifiedCommand = strings.ReplaceAll(modifiedCommand, " "+originalBasename+"$", " "+instrumentedFile)
+				}
+			}
+
+			if needsTrampolineFile {
+				if trampolinesFile, exists := trampolineFiles[packageName]; exists {
+					modifiedCommand = modifiedCommand + " " + trampolinesFile
+					modifiedCommand = strings.Replace(modifiedCommand, " -complete ", " ", 1)
+				}
+			}
+
+			if genFiles, exists := generatedFilePaths[packageName]; exists && len(genFiles) > 0 {
+				for _, genFile := range genFiles {
+					modifiedCommand = modifiedCommand + " " + genFile
+				}
+				modifiedCommand = strings.Replace(modifiedCommand, " -complete ", " ", 1)
+			}
+
+			if packageName == "main" && otelRuntimeFile != "" {
+				modifiedCommand = modifiedCommand + " " + otelRuntimeFile
+				modifiedCommand = strings.Replace(modifiedCommand, " -complete ", " ", 1)
+			}
+		}
+
+		if _, err := fmt.Fprintf(file, "%s\n", modifiedCommand); err != nil {
+			return fmt.Errorf("failed to write command to modified build log: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// generateHooksCompileCommandMultiple generates a compile command for multiple hooks files
+func generateHooksCompileCommandMultiple(commands []Command, hooksFiles []string, hooksImportPath string, workDir string) (string, string) {
+	if len(hooksFiles) == 0 {
+		return "", ""
+	}
+
+	// Find a sample compile command
+	var sampleCmd string
+	for _, cmd := range commands {
+		if isCompileCommand(&cmd) {
+			sampleCmd = cmd.Raw
+			break
+		}
+	}
+	if sampleCmd == "" {
+		return "", ""
+	}
+
+	parts := strings.Fields(sampleCmd)
+	if len(parts) < 1 {
+		return "", ""
+	}
+	compilerPath := parts[0]
+
+	// Only compile files from the first (primary) hooks directory
+	// Other hooks files are only used for extracting hook definitions, not for compilation
+	// This is because different hooks files may be in different packages
+	primaryHooksDir := filepath.Dir(hooksFiles[0])
+	goFiles, err := filepath.Glob(filepath.Join(primaryHooksDir, "*.go"))
+	if err != nil {
+		return "", ""
+	}
+
+	var allGoFiles []string
+	for _, goFile := range goFiles {
+		if strings.HasSuffix(goFile, "_test.go") {
+			continue
+		}
+		allGoFiles = append(allGoFiles, goFile)
+	}
+
+	if len(allGoFiles) == 0 {
+		return "", ""
+	}
+
+	hooksBuildDir := filepath.Join(workDir, "hooks_pkg")
+	if err := os.MkdirAll(hooksBuildDir, 0755); err != nil {
+		return "", ""
+	}
+
+	// Compile hooks library
+	hooksLibDir, hooksLibPkgFile, err := compileHooksLibrary(compilerPath, workDir, commands)
+	if err != nil {
+		fmt.Printf("           ⚠️  Failed to compile hooks library: %v\n", err)
+		return "", ""
+	}
+	_ = hooksLibDir
+
+	importcfgPath := filepath.Join(hooksBuildDir, "importcfg")
+	if err := createHooksImportcfg(importcfgPath, commands, workDir, hooksLibPkgFile); err != nil {
+		fmt.Printf("           ⚠️  Failed to create hooks importcfg: %v\n", err)
+		return "", ""
+	}
+
+	outputFile := filepath.Join(hooksBuildDir, "_pkg_.a")
+
+	var sb strings.Builder
+	sb.WriteString(compilerPath)
+	sb.WriteString(" -o ")
+	sb.WriteString(outputFile)
+	sb.WriteString(" -p ")
+	sb.WriteString(hooksImportPath)
+	sb.WriteString(" -importcfg ")
+	sb.WriteString(importcfgPath)
+	sb.WriteString(" -pack")
+
+	for _, goFile := range allGoFiles {
+		sb.WriteString(" ")
+		sb.WriteString(goFile)
+	}
+
+	fmt.Printf("           📦 Compiling %d Go files from primary hooks package\n", len(allGoFiles))
+
+	return sb.String(), outputFile
 }
 
 // executeModifiedBuildLogWithParser executes the modified build log using the existing Parser functionality
