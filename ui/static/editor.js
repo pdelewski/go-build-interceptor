@@ -3727,9 +3727,36 @@ function highlightCurrentLine(file, line) {
     const editor = window.codeEditor?.monacoEditor;
     if (!editor) return;
 
-    // Check if we need to open the file
-    const fileName = file.split('/').pop();
+    // Check if we need to open a different file
+    const currentFile = window.codeEditor?.activeTab;
+    const targetFileName = file.split('/').pop();
+    const currentFileName = currentFile ? currentFile.split('/').pop() : null;
 
+    // If the target file is different from the currently open file, open it
+    if (currentFileName !== targetFileName) {
+        console.log(`📂 Debug stepping to different file: ${file} (current: ${currentFile || 'none'})`);
+        // Open the file - this will switch the tab and update the editor
+        window.codeEditor?.openFile(file).then(() => {
+            // After file is opened, apply the decoration
+            const newEditor = window.codeEditor?.monacoEditor;
+            if (newEditor) {
+                currentLineDecoration = newEditor.deltaDecorations(currentLineDecoration, [{
+                    range: new monaco.Range(line, 1, line, 1),
+                    options: {
+                        isWholeLine: true,
+                        className: 'current-line-decoration',
+                        glyphMarginClassName: 'current-line-glyph'
+                    }
+                }]);
+                newEditor.revealLineInCenter(line);
+            }
+        }).catch(e => {
+            console.error('Failed to open file for debug:', e);
+        });
+        return;
+    }
+
+    // Same file - just update the decoration
     currentLineDecoration = editor.deltaDecorations(currentLineDecoration, [{
         range: new monaco.Range(line, 1, line, 1),
         options: {
