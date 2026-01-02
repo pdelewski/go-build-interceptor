@@ -45,7 +45,9 @@ The analyzer (`analyzer.go`) performs AST-based analysis of Go source files:
 
 ### Hooks System
 
-The hooks framework (`hooks/hooks.go`) provides a clean interface for defining function instrumentation:
+The hooks framework (`hooks/hooks.go`) provides a clean interface for defining function instrumentation.
+
+> **See [Hooks Reference](docs/hooks-reference.md)** for complete documentation of all hook types including Before/After hooks, Function Rewrite, Struct Modification, and File Generation.
 
 ```go
 type Hook struct {
