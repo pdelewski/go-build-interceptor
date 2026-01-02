@@ -35,6 +35,12 @@ type HookDefinition struct {
 	Function string
 	Receiver string
 	Type     string // "before_after", "rewrite", or "both"
+
+	// Rewrite-specific fields (extracted from Rewrite function AST)
+	RewriteFuncName    string // Name of the Rewrite function (e.g., "RewriteNewproc1")
+	RawCodeToInject    string // Raw code string to inject
+	RenameReturnValues bool   // Whether to rename unnamed return values
+	InjectPosition     string // "start" or "defer" - where to inject the code
 }
 
 // getHooksImportPath determines the full Go import path for a hooks file
@@ -230,6 +236,10 @@ func parseHookFromCompositeLit(lit *ast.CompositeLit) *HookDefinition {
 			// Check if Rewrite field is present (not nil)
 			if kvExpr.Value != nil {
 				hasRewrite = true
+				// Extract the function name if it's an identifier
+				if ident, ok := kvExpr.Value.(*ast.Ident); ok {
+					hook.RewriteFuncName = ident.Name
+				}
 			}
 		}
 	}
@@ -249,6 +259,467 @@ func parseHookFromCompositeLit(lit *ast.CompositeLit) *HookDefinition {
 	}
 
 	return nil
+}
+
+// parseRewriteFunctionsFromFile parses a hooks file and extracts rewrite information
+// from all Rewrite functions (raw code to inject, whether to rename return values, etc.)
+func parseRewriteFunctionsFromFile(hooksFile string, hooks []HookDefinition) []HookDefinition {
+	// Parse the hooks file
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, hooksFile, nil, parser.ParseComments)
+	if err != nil {
+		return hooks
+	}
+
+	// Create a map for quick lookup of hooks by rewrite function name
+	hooksByRewriteFunc := make(map[string]*HookDefinition)
+	for i := range hooks {
+		if hooks[i].RewriteFuncName != "" {
+			hooksByRewriteFunc[hooks[i].RewriteFuncName] = &hooks[i]
+		}
+	}
+
+	// Find and parse each rewrite function
+	for _, decl := range node.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+
+		hook, exists := hooksByRewriteFunc[funcDecl.Name.Name]
+		if !exists {
+			continue
+		}
+
+		// Parse the rewrite function to extract info
+		parseRewriteFunction(funcDecl, hook)
+	}
+
+	return hooks
+}
+
+// parseRewriteFunction analyzes a Rewrite function and extracts:
+// - Raw code string to inject
+// - Whether renameReturnValues is called
+// - Injection position (start/defer)
+func parseRewriteFunction(funcDecl *ast.FuncDecl, hook *HookDefinition) {
+	if funcDecl.Body == nil {
+		return
+	}
+
+	ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.CallExpr:
+			// Check for renameReturnValues call
+			if ident, ok := node.Fun.(*ast.Ident); ok {
+				if ident.Name == "renameReturnValues" {
+					hook.RenameReturnValues = true
+				}
+			}
+
+		case *ast.AssignStmt:
+			// Look for rawCode := `...` assignments
+			for i, lhs := range node.Lhs {
+				if ident, ok := lhs.(*ast.Ident); ok {
+					if ident.Name == "rawCode" || ident.Name == "code" || ident.Name == "deferCode" {
+						if i < len(node.Rhs) {
+							if lit, ok := node.Rhs[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+								// Extract the raw string value
+								rawCode := strings.Trim(lit.Value, "`\"")
+								hook.RawCodeToInject = rawCode
+
+								// Determine injection position based on content
+								if strings.HasPrefix(strings.TrimSpace(rawCode), "defer ") {
+									hook.InjectPosition = "defer"
+								} else {
+									hook.InjectPosition = "start"
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+}
+
+// GeneratedFileDefinition represents a file to be generated into a package
+type GeneratedFileDefinition struct {
+	Package  string
+	FileName string
+	Content  string
+}
+
+// StructModificationDefinition represents a struct modification to apply
+type StructModificationDefinition struct {
+	Package    string
+	StructName string
+	AddFields  []StructFieldDefinition
+}
+
+// StructFieldDefinition represents a field to add to a struct
+type StructFieldDefinition struct {
+	Name string
+	Type string
+}
+
+// parseGeneratedFilesFromHooksFile parses the hooks file to extract GeneratedFile definitions
+// from GetGeneratedFiles() function
+func parseGeneratedFilesFromHooksFile(hooksFile string) []GeneratedFileDefinition {
+	var files []GeneratedFileDefinition
+
+	// Parse the hooks file
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, hooksFile, nil, parser.ParseComments)
+	if err != nil {
+		return files
+	}
+
+	// Find string constants that might contain generated file content
+	stringConstants := make(map[string]string)
+	for _, decl := range node.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok || len(valueSpec.Names) == 0 || len(valueSpec.Values) == 0 {
+				continue
+			}
+			if lit, ok := valueSpec.Values[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				stringConstants[valueSpec.Names[0].Name] = strings.Trim(lit.Value, "`\"")
+			}
+		}
+	}
+
+	// Find GetGeneratedFiles function
+	for _, decl := range node.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || funcDecl.Name.Name != "GetGeneratedFiles" {
+			continue
+		}
+
+		// Parse the function body to extract GeneratedFile definitions
+		ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
+			compLit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+
+			file := parseGeneratedFileFromCompositeLit(compLit, stringConstants)
+			if file != nil {
+				files = append(files, *file)
+			}
+
+			return true
+		})
+		break
+	}
+
+	return files
+}
+
+// parseGeneratedFileFromCompositeLit parses a GeneratedFile struct from a composite literal
+func parseGeneratedFileFromCompositeLit(lit *ast.CompositeLit, stringConstants map[string]string) *GeneratedFileDefinition {
+	file := &GeneratedFileDefinition{}
+	hasPackage := false
+	hasFileName := false
+
+	for _, elt := range lit.Elts {
+		kvExpr, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+
+		key, ok := kvExpr.Key.(*ast.Ident)
+		if !ok {
+			continue
+		}
+
+		switch key.Name {
+		case "Package":
+			if lit, ok := kvExpr.Value.(*ast.BasicLit); ok {
+				file.Package = strings.Trim(lit.Value, `"`)
+				hasPackage = true
+			}
+		case "FileName":
+			if lit, ok := kvExpr.Value.(*ast.BasicLit); ok {
+				file.FileName = strings.Trim(lit.Value, `"`)
+				hasFileName = true
+			}
+		case "Content":
+			// Content can be a string literal or a constant reference
+			if lit, ok := kvExpr.Value.(*ast.BasicLit); ok {
+				file.Content = strings.Trim(lit.Value, "`\"")
+			} else if ident, ok := kvExpr.Value.(*ast.Ident); ok {
+				// It's a reference to a constant
+				if content, exists := stringConstants[ident.Name]; exists {
+					file.Content = content
+				}
+			}
+		}
+	}
+
+	if hasPackage && hasFileName && file.Content != "" {
+		return file
+	}
+
+	return nil
+}
+
+// parseStructModificationsFromHooksFile parses the hooks file to extract StructModification definitions
+// from GetStructModifications() function
+func parseStructModificationsFromHooksFile(hooksFile string) []StructModificationDefinition {
+	var modifications []StructModificationDefinition
+
+	// Parse the hooks file
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, hooksFile, nil, parser.ParseComments)
+	if err != nil {
+		return modifications
+	}
+
+	// Find GetStructModifications function
+	for _, decl := range node.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || funcDecl.Name.Name != "GetStructModifications" {
+			continue
+		}
+
+		// Parse the function body to extract StructModification definitions
+		ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
+			compLit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+
+			mod := parseStructModificationFromCompositeLit(compLit)
+			if mod != nil {
+				modifications = append(modifications, *mod)
+			}
+
+			return true
+		})
+		break
+	}
+
+	return modifications
+}
+
+// parseStructModificationFromCompositeLit parses a StructModification struct from a composite literal
+func parseStructModificationFromCompositeLit(lit *ast.CompositeLit) *StructModificationDefinition {
+	mod := &StructModificationDefinition{}
+	hasPackage := false
+	hasStructName := false
+
+	for _, elt := range lit.Elts {
+		kvExpr, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+
+		key, ok := kvExpr.Key.(*ast.Ident)
+		if !ok {
+			continue
+		}
+
+		switch key.Name {
+		case "Package":
+			if basicLit, ok := kvExpr.Value.(*ast.BasicLit); ok {
+				mod.Package = strings.Trim(basicLit.Value, `"`)
+				hasPackage = true
+			}
+		case "StructName":
+			if basicLit, ok := kvExpr.Value.(*ast.BasicLit); ok {
+				mod.StructName = strings.Trim(basicLit.Value, `"`)
+				hasStructName = true
+			}
+		case "AddFields":
+			// Parse the slice of StructField
+			if compLit, ok := kvExpr.Value.(*ast.CompositeLit); ok {
+				for _, fieldElt := range compLit.Elts {
+					if fieldLit, ok := fieldElt.(*ast.CompositeLit); ok {
+						field := parseStructFieldFromCompositeLit(fieldLit)
+						if field != nil {
+							mod.AddFields = append(mod.AddFields, *field)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if hasPackage && hasStructName && len(mod.AddFields) > 0 {
+		return mod
+	}
+
+	return nil
+}
+
+// parseStructFieldFromCompositeLit parses a StructField from a composite literal
+func parseStructFieldFromCompositeLit(lit *ast.CompositeLit) *StructFieldDefinition {
+	field := &StructFieldDefinition{}
+	hasName := false
+	hasType := false
+
+	for _, elt := range lit.Elts {
+		kvExpr, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+
+		key, ok := kvExpr.Key.(*ast.Ident)
+		if !ok {
+			continue
+		}
+
+		switch key.Name {
+		case "Name":
+			if basicLit, ok := kvExpr.Value.(*ast.BasicLit); ok {
+				field.Name = strings.Trim(basicLit.Value, `"`)
+				hasName = true
+			}
+		case "Type":
+			if basicLit, ok := kvExpr.Value.(*ast.BasicLit); ok {
+				field.Type = strings.Trim(basicLit.Value, `"`)
+				hasType = true
+			}
+		}
+	}
+
+	if hasName && hasType {
+		return field
+	}
+
+	return nil
+}
+
+// applyStructModification modifies a struct definition in a source file by adding new fields
+func applyStructModification(sourceFile string, targetFile string, mod StructModificationDefinition) error {
+	// Parse the source file
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, sourceFile, nil, parser.ParseComments)
+	if err != nil {
+		return fmt.Errorf("failed to parse source file %s: %w", sourceFile, err)
+	}
+
+	modified := false
+
+	// Find the struct type declaration
+	for _, decl := range node.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.TYPE {
+			continue
+		}
+
+		for _, spec := range genDecl.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != mod.StructName {
+				continue
+			}
+
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				continue
+			}
+
+			// Add new fields to the struct
+			for _, field := range mod.AddFields {
+				newField := &ast.Field{
+					Names: []*ast.Ident{ast.NewIdent(field.Name)},
+					Type:  ast.NewIdent(field.Type),
+				}
+				structType.Fields.List = append(structType.Fields.List, newField)
+				fmt.Printf("           ➕ Added field '%s %s' to struct '%s'\n", field.Name, field.Type, mod.StructName)
+			}
+			modified = true
+			break
+		}
+
+		if modified {
+			break
+		}
+	}
+
+	if !modified {
+		return fmt.Errorf("struct '%s' not found in file %s", mod.StructName, sourceFile)
+	}
+
+	// Write the modified file
+	file, err := os.Create(targetFile)
+	if err != nil {
+		return fmt.Errorf("failed to create target file %s: %w", targetFile, err)
+	}
+	defer file.Close()
+
+	if err := format.Node(file, fset, node); err != nil {
+		return fmt.Errorf("failed to format and write modified file: %w", err)
+	}
+
+	return nil
+}
+
+// writeGeneratedFileToPackage writes a generated file to the appropriate package directory in WORK
+func writeGeneratedFileToPackage(genFile GeneratedFileDefinition, workDir string, buildID string) (string, error) {
+	if workDir == "" || buildID == "" {
+		return "", fmt.Errorf("missing work directory or build ID")
+	}
+
+	// Create the target directory: $WORK/buildID/src/
+	targetDir := filepath.Join(workDir, buildID, "src")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create target directory %s: %w", targetDir, err)
+	}
+
+	// Write the generated file
+	targetFile := filepath.Join(targetDir, genFile.FileName)
+	if err := os.WriteFile(targetFile, []byte(genFile.Content), 0644); err != nil {
+		return "", fmt.Errorf("failed to write generated file %s: %w", targetFile, err)
+	}
+
+	fmt.Printf("           📝 Generated file: %s\n", targetFile)
+	return targetFile, nil
+}
+
+// findStructDefinitionFile finds the source file containing a struct definition
+func findStructDefinitionFile(files []string, structName string) (string, error) {
+	for _, file := range files {
+		if !strings.HasSuffix(file, ".go") {
+			continue
+		}
+
+		// Parse the file
+		fset := token.NewFileSet()
+		node, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
+		if err != nil {
+			continue
+		}
+
+		// Look for the struct type declaration
+		for _, decl := range node.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.TYPE {
+				continue
+			}
+
+			for _, spec := range genDecl.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+
+				if typeSpec.Name.Name == structName {
+					if _, ok := typeSpec.Type.(*ast.StructType); ok {
+						return file, nil
+					}
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("struct '%s' not found in any file", structName)
 }
 
 // matchFunctionWithHooks checks if a function matches any of the provided hooks
@@ -285,7 +756,30 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 	// Parse the hooks file
 	hooks, err := parseHooksFile(hooksFile)
 	if err != nil {
-		return fmt.Errorf("error parsing hooks file: %w", err)
+		// It's ok if no hooks are found - we might still have struct modifications or generated files
+		fmt.Printf("⚠️  Warning: %v\n", err)
+		hooks = []HookDefinition{}
+	}
+
+	// Parse rewrite functions to extract raw code and transformation info
+	hooks = parseRewriteFunctionsFromFile(hooksFile, hooks)
+
+	// Parse struct modifications from the hooks file
+	structMods := parseStructModificationsFromHooksFile(hooksFile)
+	if len(structMods) > 0 {
+		fmt.Printf("Loaded %d struct modifications from %s\n", len(structMods), filepath.Base(hooksFile))
+		for _, mod := range structMods {
+			fmt.Printf("  - Package: %s, Struct: %s, Fields to add: %d\n", mod.Package, mod.StructName, len(mod.AddFields))
+		}
+	}
+
+	// Parse generated files from the hooks file
+	generatedFiles := parseGeneratedFilesFromHooksFile(hooksFile)
+	if len(generatedFiles) > 0 {
+		fmt.Printf("Loaded %d generated files from %s\n", len(generatedFiles), filepath.Base(hooksFile))
+		for _, gf := range generatedFiles {
+			fmt.Printf("  - Package: %s, File: %s (%d bytes)\n", gf.Package, gf.FileName, len(gf.Content))
+		}
 	}
 
 	// Get the full import path for the hooks package
@@ -323,10 +817,13 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 	compileCount := 0
 	matchCount := 0
-	packagesWithMatches := make(map[string]bool) // Track packages that have matches
-	copiedFiles := make(map[string]bool)         // Track files already copied per package
-	fileReplacements := make(map[string]string)  // Track original file -> instrumented file mapping
-	trampolineFiles := make(map[string]string)   // Track package -> trampolines file path
+	packagesWithMatches := make(map[string]bool)      // Track packages that have matches
+	copiedFiles := make(map[string]bool)              // Track files already copied per package
+	fileReplacements := make(map[string]string)       // Track original file -> instrumented file mapping
+	trampolineFiles := make(map[string]string)        // Track package -> trampolines file path
+	generatedFilePaths := make(map[string][]string)   // Track package -> generated file paths
+	structModApplied := make(map[string]bool)         // Track which struct modifications have been applied
+	packagesWithStructMods := make(map[string]bool)   // Track packages with struct modifications
 
 	// Process each compile command
 	for cmdIdx, cmd := range commands {
@@ -360,6 +857,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 
 			fileHasMatches := false
 			fileNeedsTrampolines := false
+			fileNeedsRewrite := false
 
 			// Check each function against hooks
 			for _, fn := range functions {
@@ -379,18 +877,22 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 						fmt.Printf("           Will inject: Before and After hooks\n")
 						fileNeedsTrampolines = true
 					case "rewrite":
-						fmt.Printf("           Will rewrite: Function signature and body\n")
-						fmt.Printf("           ⚠️  Note: Rewrite requires manual AST transformation (not yet automated)\n")
+						fmt.Printf("           Will rewrite: Function body (inject raw code)\n")
+						if match.RawCodeToInject != "" {
+							fmt.Printf("           Raw code to inject: %d bytes\n", len(match.RawCodeToInject))
+						}
+						fileNeedsRewrite = true
 					case "both":
 						fmt.Printf("           Will inject: Before/After hooks AND rewrite function\n")
 						fileNeedsTrampolines = true
+						fileNeedsRewrite = true
 					}
 				}
 			}
 
 			// Copy and instrument the source file to work directory if it has matches and hasn't been copied yet
-			// Only process files that need before/after hooks (trampolines)
-			if fileHasMatches && fileNeedsTrampolines && workDir != "" {
+			// Process files that need trampolines OR rewrite
+			if fileHasMatches && (fileNeedsTrampolines || fileNeedsRewrite) && workDir != "" {
 				copyKey := packageName + ":" + file
 				if !copiedFiles[copyKey] {
 					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
@@ -404,9 +906,11 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 								fileReplacements[file] = instrumentedFilePath
 								fmt.Printf("           🔄 Will replace %s with %s in compile command\n", file, instrumentedFilePath)
 
-								// Track the trampolines file for this package
-								trampolinesPath := filepath.Join(workDir, pkgInfo.BuildID, "src", "otel_trampolines.go")
-								trampolineFiles[packageName] = trampolinesPath
+								// Track the trampolines file for this package - only for before_after hooks
+								if fileNeedsTrampolines {
+									trampolinesPath := filepath.Join(workDir, pkgInfo.BuildID, "src", "otel_trampolines.go")
+									trampolineFiles[packageName] = trampolinesPath
+								}
 							}
 						}
 					}
@@ -418,7 +922,74 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 		if packageHasMatches {
 			packagesWithMatches[packageName] = true
 		}
+
+		// Check for struct modifications in this package
+		for _, mod := range structMods {
+			if mod.Package != packageName {
+				continue
+			}
+
+			modKey := mod.Package + ":" + mod.StructName
+			if structModApplied[modKey] {
+				continue
+			}
+
+			fmt.Printf("  🔍 Looking for struct '%s' to modify in package '%s'\n", mod.StructName, packageName)
+
+			// Find the file containing the struct definition
+			structFile, err := findStructDefinitionFile(files, mod.StructName)
+			if err != nil {
+				fmt.Printf("     ⚠️  %v\n", err)
+				continue
+			}
+
+			fmt.Printf("     Found struct in: %s\n", filepath.Base(structFile))
+
+			// Apply struct modification
+			if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" && workDir != "" {
+				targetDir := filepath.Join(workDir, pkgInfo.BuildID, "src")
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					fmt.Printf("     ⚠️  Failed to create target dir: %v\n", err)
+					continue
+				}
+
+				targetFile := filepath.Join(targetDir, filepath.Base(structFile))
+				if err := applyStructModification(structFile, targetFile, mod); err != nil {
+					fmt.Printf("     ⚠️  Failed to apply struct modification: %v\n", err)
+				} else {
+					structModApplied[modKey] = true
+					packagesWithStructMods[packageName] = true
+
+					// Track the file replacement
+					fileReplacements[structFile] = targetFile
+					fmt.Printf("     ✅ Modified struct '%s' and saved to: %s\n", mod.StructName, targetFile)
+				}
+			}
+		}
+
+		// Check for generated files for this package
+		for _, genFile := range generatedFiles {
+			if genFile.Package != packageName {
+				continue
+			}
+
+			fmt.Printf("  📝 Generating file '%s' for package '%s'\n", genFile.FileName, packageName)
+
+			if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" && workDir != "" {
+				genFilePath, err := writeGeneratedFileToPackage(genFile, workDir, pkgInfo.BuildID)
+				if err != nil {
+					fmt.Printf("     ⚠️  Failed to generate file: %v\n", err)
+				} else {
+					generatedFilePaths[packageName] = append(generatedFilePaths[packageName], genFilePath)
+					packagesWithMatches[packageName] = true // Ensure this package gets processed
+					fmt.Printf("     ✅ Generated: %s\n", genFilePath)
+				}
+			}
+		}
 	}
+
+	// Suppress unused variable warnings
+	_ = packagesWithStructMods
 
 	fmt.Printf("\nSummary: Processed %d compile commands, found %d hook matches in %d packages\n",
 		compileCount, matchCount, len(packagesWithMatches))
@@ -467,8 +1038,8 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 	}
 
 	// Generate modified build log with updated file paths
-	if len(fileReplacements) > 0 {
-		if err := generateModifiedBuildLog(commands, fileReplacements, trampolineFiles, hooksImportPath, workDir, hooksFile, otelRuntimeFile, mainPackageInfo); err != nil {
+	if len(fileReplacements) > 0 || len(generatedFilePaths) > 0 {
+		if err := generateModifiedBuildLog(commands, fileReplacements, trampolineFiles, generatedFilePaths, hooksImportPath, workDir, hooksFile, otelRuntimeFile, mainPackageInfo); err != nil {
 			fmt.Printf("⚠️  Failed to generate modified build log: %v\n", err)
 		} else {
 			fmt.Printf("\n📄 Generated modified build log: go-build-modified.log\n")
@@ -779,6 +1350,7 @@ func instrumentFile(sourceFile, targetFile string, packageName string, hooks []H
 	// Track which hooks apply to functions in this file
 	var applicableHooks []HookDefinition
 	var instrumentedFunctions []string
+	var rewrittenFunctions []string
 
 	// Find functions that match hooks
 	for _, decl := range node.Decls {
@@ -797,11 +1369,28 @@ func instrumentFile(sourceFile, targetFile string, packageName string, hooks []H
 
 			// Check if this function matches any hook
 			if match := matchFunctionWithHooks(packageName, funcInfo, hooks); match != nil {
-				if match.Type == "before_after" || match.Type == "both" {
+				switch match.Type {
+				case "before_after":
 					applicableHooks = append(applicableHooks, *match)
 					instrumentedFunctions = append(instrumentedFunctions, funcDecl.Name.Name)
+					instrumentFunction(funcDecl, match)
 
-					// Instrument the function
+				case "rewrite":
+					if err := applyRewriteTransformation(funcDecl, match); err != nil {
+						fmt.Printf("           ⚠️  Failed to apply rewrite to %s: %v\n", funcDecl.Name.Name, err)
+					} else {
+						rewrittenFunctions = append(rewrittenFunctions, funcDecl.Name.Name)
+					}
+
+				case "both":
+					// First apply rewrite, then add hooks
+					if err := applyRewriteTransformation(funcDecl, match); err != nil {
+						fmt.Printf("           ⚠️  Failed to apply rewrite to %s: %v\n", funcDecl.Name.Name, err)
+					} else {
+						rewrittenFunctions = append(rewrittenFunctions, funcDecl.Name.Name)
+					}
+					applicableHooks = append(applicableHooks, *match)
+					instrumentedFunctions = append(instrumentedFunctions, funcDecl.Name.Name)
 					instrumentFunction(funcDecl, match)
 				}
 			}
@@ -833,7 +1422,73 @@ func instrumentFile(sourceFile, targetFile string, packageName string, hooks []H
 		fmt.Printf("           🔧 Instrumented functions: %s\n", strings.Join(instrumentedFunctions, ", "))
 	}
 
+	if len(rewrittenFunctions) > 0 {
+		fmt.Printf("           ✏️  Rewritten functions: %s\n", strings.Join(rewrittenFunctions, ", "))
+	}
+
 	return nil
+}
+
+// applyRewriteTransformation applies the rewrite transformation to a function
+// based on the extracted RawCodeToInject and other settings
+func applyRewriteTransformation(funcDecl *ast.FuncDecl, hook *HookDefinition) error {
+	if funcDecl.Body == nil {
+		return fmt.Errorf("function %s has no body", funcDecl.Name.Name)
+	}
+
+	if hook.RawCodeToInject == "" {
+		return fmt.Errorf("no raw code to inject for function %s", funcDecl.Name.Name)
+	}
+
+	// Rename unnamed return values if needed
+	if hook.RenameReturnValues {
+		renameUnnamedReturnValues(funcDecl)
+	}
+
+	// Parse the raw code to inject
+	stmts, err := parseCodeSnippet(hook.RawCodeToInject)
+	if err != nil {
+		return fmt.Errorf("failed to parse raw code: %w", err)
+	}
+
+	// Insert at the beginning of the function body
+	funcDecl.Body.List = append(stmts, funcDecl.Body.List...)
+
+	return nil
+}
+
+// renameUnnamedReturnValues renames unnamed return values to _unnamedRetVal0, _unnamedRetVal1, etc.
+func renameUnnamedReturnValues(funcDecl *ast.FuncDecl) {
+	if funcDecl.Type.Results == nil {
+		return
+	}
+	idx := 0
+	for _, field := range funcDecl.Type.Results.List {
+		if field.Names == nil || len(field.Names) == 0 {
+			name := fmt.Sprintf("_unnamedRetVal%d", idx)
+			field.Names = []*ast.Ident{ast.NewIdent(name)}
+			idx++
+		}
+	}
+}
+
+// parseCodeSnippet parses a code snippet into AST statements
+func parseCodeSnippet(code string) ([]ast.Stmt, error) {
+	// Wrap in a function to make it parseable
+	wrapped := fmt.Sprintf("package p\nfunc f() {\n%s\n}", code)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", wrapped, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse error: %w", err)
+	}
+
+	// Extract statements from the function body
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			return fn.Body.List, nil
+		}
+	}
+	return nil, fmt.Errorf("no function found in parsed snippet")
 }
 
 // generateTrampolinesFile creates a separate file with trampoline functions and go:linkname declarations
@@ -1368,7 +2023,7 @@ func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string
 }
 
 // generateModifiedBuildLog generates a new build log with updated file paths for instrumented files
-func generateModifiedBuildLog(commands []Command, fileReplacements map[string]string, trampolineFiles map[string]string, hooksImportPath string, workDir string, hooksFile string, otelRuntimeFile string, mainPackageInfo *PackagePathInfo) error {
+func generateModifiedBuildLog(commands []Command, fileReplacements map[string]string, trampolineFiles map[string]string, generatedFilePaths map[string][]string, hooksImportPath string, workDir string, hooksFile string, otelRuntimeFile string, mainPackageInfo *PackagePathInfo) error {
 	outputFile := "go-build-modified.log"
 
 	file, err := os.Create(outputFile)
@@ -1490,6 +2145,16 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 					// Strip -complete flag as we have functions without body (go:linkname declarations)
 					modifiedCommand = strings.Replace(modifiedCommand, " -complete ", " ", 1)
 				}
+			}
+
+			// Add generated files to compile command if this package has any
+			if genFiles, exists := generatedFilePaths[packageName]; exists && len(genFiles) > 0 {
+				for _, genFile := range genFiles {
+					modifiedCommand = modifiedCommand + " " + genFile
+					fmt.Printf("           📎 Adding generated file to compile command for package '%s': %s\n", packageName, filepath.Base(genFile))
+				}
+				// Strip -complete flag as we're adding generated files
+				modifiedCommand = strings.Replace(modifiedCommand, " -complete ", " ", 1)
 			}
 
 			// Add otel.runtime.go to main package compile command
