@@ -359,6 +359,7 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 			}
 
 			fileHasMatches := false
+			fileNeedsTrampolines := false
 
 			// Check each function against hooks
 			for _, fn := range functions {
@@ -376,16 +377,20 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 					switch match.Type {
 					case "before_after":
 						fmt.Printf("           Will inject: Before and After hooks\n")
+						fileNeedsTrampolines = true
 					case "rewrite":
 						fmt.Printf("           Will rewrite: Function signature and body\n")
+						fmt.Printf("           ⚠️  Note: Rewrite requires manual AST transformation (not yet automated)\n")
 					case "both":
 						fmt.Printf("           Will inject: Before/After hooks AND rewrite function\n")
+						fileNeedsTrampolines = true
 					}
 				}
 			}
 
 			// Copy and instrument the source file to work directory if it has matches and hasn't been copied yet
-			if fileHasMatches && workDir != "" {
+			// Only process files that need before/after hooks (trampolines)
+			if fileHasMatches && fileNeedsTrampolines && workDir != "" {
 				copyKey := packageName + ":" + file
 				if !copiedFiles[copyKey] {
 					if pkgInfo, exists := packageInfo[packageName]; exists && pkgInfo.BuildID != "" {
