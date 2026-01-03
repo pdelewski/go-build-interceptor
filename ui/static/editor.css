@@ -1598,6 +1598,255 @@ body.terminal-resizing .terminal-resize-handle::before {
   background: linear-gradient(135deg, transparent 50%, var(--vscode-accent) 50%);
 }
 
+/* File Selector Dialog Styles */
+.file-selector-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.file-selector-dialog {
+  background: var(--vscode-bg);
+  border: 1px solid var(--vscode-border);
+  border-radius: 8px;
+  width: 500px;
+  max-width: 90vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.file-selector-header {
+  padding: 14px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  background: var(--vscode-accent);
+  border-radius: 8px 8px 0 0;
+}
+
+.file-selector-path {
+  padding: 10px 16px;
+  background: var(--vscode-editor-bg);
+  border-bottom: 1px solid var(--vscode-border);
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  color: var(--vscode-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-selector-path .path-icon {
+  font-size: 14px;
+}
+
+.file-selector-filter {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--vscode-text);
+  background: var(--vscode-editor-bg);
+  border: 1px solid var(--vscode-border);
+  border-radius: 4px;
+  outline: none;
+}
+
+.file-selector-filter:focus {
+  border-color: var(--vscode-accent);
+}
+
+.file-selector-actions {
+  padding: 8px 16px;
+  display: flex;
+  gap: 8px;
+  background: var(--vscode-sidebar-bg);
+  border-bottom: 1px solid var(--vscode-border);
+}
+
+.file-selector-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--vscode-text);
+  background: var(--vscode-bg);
+  border: 1px solid var(--vscode-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.file-selector-btn:hover {
+  background: var(--vscode-hover);
+}
+
+.file-selector-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+  background: var(--vscode-editor-bg);
+  max-height: 350px;
+}
+
+.file-selector-dir {
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dcdcaa;
+  background: rgba(255, 255, 255, 0.03);
+  margin-top: 8px;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.file-selector-dir:first-child {
+  margin-top: 0;
+}
+
+.file-selector-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px 6px 24px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--vscode-text);
+  font-family: 'Consolas', 'Courier New', monospace;
+  transition: background 0.1s;
+}
+
+.file-selector-item:hover {
+  background: var(--vscode-hover);
+}
+
+.file-selector-checkbox {
+  margin-right: 10px;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--vscode-accent);
+  cursor: pointer;
+}
+
+.file-selector-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--vscode-sidebar-bg);
+  border-top: 1px solid var(--vscode-border);
+  border-radius: 0 0 8px 8px;
+}
+
+.file-selector-cancel {
+  background: transparent;
+}
+
+.file-selector-ok {
+  background: var(--vscode-accent) !important;
+  color: white !important;
+  border-color: var(--vscode-accent) !important;
+}
+
+.file-selector-ok:hover {
+  background: #0e7dd4 !important;
+}
+
+/* Selected Files Section at top of file selector */
+.selected-files-section {
+  background: var(--vscode-sidebar-bg);
+  border-bottom: 1px solid var(--vscode-border);
+  padding: 8px 12px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.selected-files-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.selected-file-item {
+  display: flex;
+  align-items: center;
+  padding: 3px 6px;
+  background: rgba(0, 122, 204, 0.15);
+  border-radius: 3px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--vscode-text);
+}
+
+.selected-file-remove {
+  cursor: pointer;
+  color: #888;
+  margin-right: 8px;
+  font-size: 11px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+}
+
+.selected-file-remove:hover {
+  background: rgba(255, 100, 100, 0.3);
+  color: #ff6b6b;
+}
+
+.selected-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.file-selector-item.directory {
+  color: #dcdcaa;
+}
+
+.file-selector-icon {
+  margin-right: 8px;
+}
+
+.file-selector-name {
+  flex: 1;
+}
+
+.file-selector-loading,
+.file-selector-error {
+  padding: 20px;
+  text-align: center;
+  color: var(--vscode-text-muted);
+}
+
+.file-selector-error {
+  color: #ff6b6b;
+}
+
 /* Debug Toolbar Styles */
 .debug-toolbar {
   display: flex;

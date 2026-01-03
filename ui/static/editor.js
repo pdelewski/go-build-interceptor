@@ -3376,9 +3376,319 @@ function addTerminalOutput(text, className = '') {
     terminalContent.scrollTop = terminalContent.scrollHeight;
 }
 
+// File selector dialog for selecting hooks files - with directory navigation
+function showFileSelector(defaultPath = './generated_hooks/generated_hooks.go') {
+    return new Promise(async (resolve) => {
+        let currentDir = '.';
+        const selectedFiles = new Set(); // Track selected files across directories
+
+        // Remove existing dialog if present
+        const existing = document.getElementById('fileSelectorDialog');
+        if (existing) {
+            existing.remove();
+        }
+
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'fileSelectorOverlay';
+        overlay.className = 'file-selector-overlay';
+
+        // Create dialog
+        const dialog = document.createElement('div');
+        dialog.id = 'fileSelectorDialog';
+        dialog.className = 'file-selector-dialog';
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'file-selector-header';
+        header.innerHTML = '<span>Select Hooks Files for Compile</span>';
+
+        // Path bar showing current directory
+        const pathBar = document.createElement('div');
+        pathBar.className = 'file-selector-path';
+        pathBar.id = 'fileSelectorPath';
+
+        // Action buttons (Select All / Deselect All)
+        const actionBar = document.createElement('div');
+        actionBar.className = 'file-selector-actions';
+        actionBar.innerHTML = `
+            <button class="file-selector-btn" id="selectAllBtn">Select All .go</button>
+            <button class="file-selector-btn" id="deselectAllBtn">Deselect All</button>
+            <span class="file-selector-count" id="selectedCount">0 selected</span>
+        `;
+
+        // File list container
+        const fileList = document.createElement('div');
+        fileList.className = 'file-selector-list';
+        fileList.id = 'fileSelectorList';
+
+        // Footer with OK/Cancel
+        const footer = document.createElement('div');
+        footer.className = 'file-selector-footer';
+        footer.innerHTML = `
+            <button class="file-selector-btn file-selector-cancel" id="cancelBtn">Cancel</button>
+            <button class="file-selector-btn file-selector-ok" id="okBtn">Compile Selected</button>
+        `;
+
+        // Assemble dialog
+        dialog.appendChild(header);
+        dialog.appendChild(pathBar);
+        dialog.appendChild(actionBar);
+        dialog.appendChild(fileList);
+        dialog.appendChild(footer);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Update selected count display
+        function updateSelectedCount() {
+            const countEl = document.getElementById('selectedCount');
+            if (countEl) {
+                countEl.textContent = `${selectedFiles.size} selected`;
+            }
+        }
+
+        // Load directory contents
+        async function loadDirectory(dir) {
+            currentDir = dir;
+            const pathEl = document.getElementById('fileSelectorPath');
+            const listEl = document.getElementById('fileSelectorList');
+
+            pathEl.innerHTML = `<span class="path-icon">📁</span> ${dir === '.' ? 'Current Directory' : dir}`;
+            listEl.innerHTML = '<div class="file-selector-loading">Loading...</div>';
+
+            try {
+                const response = await fetch(`/api/list?dir=${encodeURIComponent(dir)}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    renderDirectory(result.files, dir);
+                } else {
+                    listEl.innerHTML = `<div class="file-selector-error">Error: ${result.error}</div>`;
+                }
+            } catch (e) {
+                console.error('Failed to load directory:', e);
+                listEl.innerHTML = `<div class="file-selector-error">Failed to load directory</div>`;
+            }
+        }
+
+        // Render selected files section at the top
+        function renderSelectedFiles() {
+            let selectedSection = document.getElementById('selectedFilesSection');
+
+            if (selectedFiles.size === 0) {
+                if (selectedSection) {
+                    selectedSection.remove();
+                }
+                return;
+            }
+
+            if (!selectedSection) {
+                selectedSection = document.createElement('div');
+                selectedSection.id = 'selectedFilesSection';
+                selectedSection.className = 'selected-files-section';
+                const listEl = document.getElementById('fileSelectorList');
+                listEl.parentNode.insertBefore(selectedSection, listEl);
+            }
+
+            selectedSection.innerHTML = '<div class="selected-files-header">Selected Files:</div>';
+
+            Array.from(selectedFiles).sort().forEach(filePath => {
+                const item = document.createElement('div');
+                item.className = 'selected-file-item';
+
+                const removeBtn = document.createElement('span');
+                removeBtn.className = 'selected-file-remove';
+                removeBtn.textContent = '✕';
+                removeBtn.title = 'Remove';
+                removeBtn.addEventListener('click', () => {
+                    selectedFiles.delete(filePath);
+                    renderSelectedFiles();
+                    updateSelectedCount();
+                    // Update checkbox if visible in current directory
+                    const listEl = document.getElementById('fileSelectorList');
+                    listEl.querySelectorAll('.file-selector-item').forEach(itemEl => {
+                        const nameEl = itemEl.querySelector('.file-selector-name');
+                        const cb = itemEl.querySelector('.file-selector-checkbox');
+                        if (nameEl && cb && nameEl.title === filePath) {
+                            cb.checked = false;
+                        }
+                    });
+                });
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'selected-file-name';
+                nameSpan.textContent = filePath;
+                nameSpan.title = filePath;
+
+                item.appendChild(removeBtn);
+                item.appendChild(nameSpan);
+                selectedSection.appendChild(item);
+            });
+        }
+
+        // Render directory contents
+        function renderDirectory(files, dir) {
+            const listEl = document.getElementById('fileSelectorList');
+            listEl.innerHTML = '';
+
+            // Filter: only directories and .go files
+            const filteredFiles = files.filter(file => {
+                const isDirectory = file.endsWith('/');
+                if (isDirectory) return true;
+                return file.endsWith('.go');
+            });
+
+            filteredFiles.forEach(file => {
+                const isDirectory = file.endsWith('/');
+                const fileName = isDirectory ? file.slice(0, -1) : file;
+                const fullPath = dir === '.' ? fileName : `${dir}/${fileName}`;
+
+                const item = document.createElement('div');
+                item.className = 'file-selector-item';
+
+                if (isDirectory) {
+                    // Directory item - clickable to navigate
+                    item.classList.add('directory');
+                    item.innerHTML = `
+                        <span class="file-selector-icon">📁</span>
+                        <span class="file-selector-name">${fileName}</span>
+                    `;
+                    item.addEventListener('click', () => {
+                        if (fileName === '..') {
+                            // Go up one level
+                            if (dir === '.') {
+                                loadDirectory('..');
+                            } else {
+                                const parentDir = dir.includes('/')
+                                    ? dir.substring(0, dir.lastIndexOf('/')) || '.'
+                                    : '.';
+                                loadDirectory(parentDir);
+                            }
+                        } else {
+                            loadDirectory(fullPath);
+                        }
+                    });
+                } else {
+                    // .go file item with checkbox
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'file-selector-checkbox';
+                    checkbox.checked = selectedFiles.has(fullPath);
+                    checkbox.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            selectedFiles.add(fullPath);
+                        } else {
+                            selectedFiles.delete(fullPath);
+                        }
+                        renderSelectedFiles();
+                        updateSelectedCount();
+                    });
+
+                    item.appendChild(checkbox);
+
+                    const iconSpan = document.createElement('span');
+                    iconSpan.className = 'file-selector-icon';
+                    iconSpan.textContent = '🐹';
+                    item.appendChild(iconSpan);
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'file-selector-name';
+                    nameSpan.textContent = fileName;
+                    nameSpan.title = fullPath;
+                    item.appendChild(nameSpan);
+
+                    // Click on file row (not checkbox) to toggle
+                    item.style.cursor = 'pointer';
+                    item.addEventListener('click', (e) => {
+                        if (e.target.type !== 'checkbox') {
+                            const cb = item.querySelector('.file-selector-checkbox');
+                            if (cb) {
+                                cb.checked = !cb.checked;
+                                if (cb.checked) {
+                                    selectedFiles.add(fullPath);
+                                } else {
+                                    selectedFiles.delete(fullPath);
+                                }
+                                renderSelectedFiles();
+                                updateSelectedCount();
+                            }
+                        }
+                    });
+                }
+
+                listEl.appendChild(item);
+            });
+
+            renderSelectedFiles();
+            updateSelectedCount();
+        }
+
+        // Event handlers
+        document.getElementById('selectAllBtn').addEventListener('click', () => {
+            const listEl = document.getElementById('fileSelectorList');
+            listEl.querySelectorAll('.file-selector-checkbox').forEach(cb => {
+                cb.checked = true;
+                selectedFiles.add(cb.closest('.file-selector-item').querySelector('.file-selector-name').title ||
+                    (currentDir === '.' ? '' : currentDir + '/') + cb.closest('.file-selector-item').querySelector('.file-selector-name').textContent);
+            });
+            // Re-add with correct paths
+            listEl.querySelectorAll('.file-selector-item:not(.directory)').forEach(item => {
+                const nameEl = item.querySelector('.file-selector-name');
+                const cb = item.querySelector('.file-selector-checkbox');
+                if (cb && nameEl) {
+                    const fullPath = nameEl.title || (currentDir === '.' ? nameEl.textContent : `${currentDir}/${nameEl.textContent}`);
+                    if (cb.checked) {
+                        selectedFiles.add(fullPath);
+                    }
+                }
+            });
+            renderSelectedFiles();
+            updateSelectedCount();
+        });
+
+        document.getElementById('deselectAllBtn').addEventListener('click', () => {
+            const listEl = document.getElementById('fileSelectorList');
+            listEl.querySelectorAll('.file-selector-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+            // Only remove files from current directory view
+            listEl.querySelectorAll('.file-selector-item:not(.directory)').forEach(item => {
+                const nameEl = item.querySelector('.file-selector-name');
+                if (nameEl) {
+                    const fullPath = nameEl.title || (currentDir === '.' ? nameEl.textContent : `${currentDir}/${nameEl.textContent}`);
+                    selectedFiles.delete(fullPath);
+                }
+            });
+            renderSelectedFiles();
+            updateSelectedCount();
+        });
+
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+            overlay.remove();
+            resolve(null);
+        });
+
+        document.getElementById('okBtn').addEventListener('click', () => {
+            overlay.remove();
+            resolve(selectedFiles.size > 0 ? Array.from(selectedFiles).join(',') : null);
+        });
+
+        // Close on overlay click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+                resolve(null);
+            }
+        });
+
+        // Load initial directory
+        loadDirectory('.');
+    });
+}
+
 // Update the runCompile function to show output in message window
 async function runCompile() {
-    const hooksFile = prompt('Enter hooks file path:', './generated_hooks/generated_hooks.go');
+    const hooksFile = await showFileSelector('./generated_hooks/generated_hooks.go');
 
     if (!hooksFile || hooksFile.trim() === '') {
         return;
