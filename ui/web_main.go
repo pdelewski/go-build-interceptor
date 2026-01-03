@@ -35,6 +35,9 @@ type FileResponse struct {
 // Global variable to store the root directory
 var rootDirectory string
 
+// Restrict navigation to root directory only (disabled by default for local use)
+var restrictNavigation bool
+
 // WebSocket upgrader for LSP
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -231,6 +234,7 @@ func main() {
 	// Parse command line flags
 	flag.StringVar(&rootDirectory, "dir", ".", "Root directory to serve files from")
 	port := flag.String("port", "9090", "Port to serve on")
+	flag.BoolVar(&restrictNavigation, "restrict-nav", false, "Restrict file navigation to root directory only")
 	flag.Parse()
 
 	// Resolve the root directory to an absolute path
@@ -299,8 +303,8 @@ func getFullPath(relativePath string) (string, error) {
 	// Join with root directory
 	fullPath := filepath.Join(rootDirectory, cleanPath)
 
-	// Ensure the path is within the root directory
-	if !strings.HasPrefix(fullPath, rootDirectory) {
+	// Only enforce root directory restriction if restrictNavigation is enabled
+	if restrictNavigation && !strings.HasPrefix(fullPath, rootDirectory) {
 		return "", fmt.Errorf("path outside root directory")
 	}
 
@@ -975,9 +979,19 @@ func listFiles(w http.ResponseWriter, r *http.Request) {
 
 	var fileList []string
 
-	// Add parent directory link if not in root
-	if dir != "." && fullPath != rootDirectory {
-		fileList = append(fileList, "../")
+	// Add parent directory link
+	// If restrictNavigation is disabled, allow navigating up to filesystem root
+	// If restrictNavigation is enabled, only allow navigating within rootDirectory
+	if !restrictNavigation {
+		// Always show ".." unless we're at filesystem root "/"
+		if fullPath != "/" {
+			fileList = append(fileList, "../")
+		}
+	} else {
+		// Only show ".." when we're not at the configured root directory
+		if dir != "." && fullPath != rootDirectory {
+			fileList = append(fileList, "../")
+		}
 	}
 
 	// Add directories first, then files
