@@ -61,6 +61,64 @@ func AfterMyFunction(ctx hooks.HookContext) {
 
 This builds your project with the hooks automatically injected.
 
+### Real Examples
+
+The project includes ready-to-use instrumentation examples:
+
+#### Example 1: Function Tracing (hello)
+
+`instrumentations/hello/generated_hooks.go` provides simple before/after tracing for functions in the `main` package. It logs function entry/exit with execution timing.
+
+```bash
+# Navigate to your hello example project
+cd examples/hello
+
+# Compile with tracing hooks
+../../go-build-interceptor -c ../../instrumentations/hello/generated_hooks.go
+
+# Run the instrumented binary
+./hello
+```
+
+Output:
+```
+[BEFORE] main.main()
+[BEFORE] main.foo()
+[AFTER] main.foo() completed in 1.002s
+[BEFORE] main.bar1()
+[AFTER] main.bar1() completed in 500ms
+[AFTER] main.main() completed in 1.503s
+```
+
+#### Example 2: Runtime Instrumentation (GLS)
+
+`instrumentations/runtime/runtime_hooks.go` provides Goroutine Local Storage (GLS) support by modifying Go's runtime. This enables context propagation across goroutines for distributed tracing.
+
+**Important:** Runtime instrumentation is **required** if you need context to propagate between function calls and across goroutines. Without it, each function hook operates in isolation without access to shared trace context. If you only need simple function tracing without context propagation (like basic timing/logging), you can skip runtime hooks.
+
+This example shows three hook capabilities:
+- **Struct Modification**: Adds `otel_trace_context` and `otel_baggage_container` fields to the runtime `g` struct
+- **File Generation**: Creates `runtime_gls.go` with accessor functions
+- **Function Rewriting**: Injects context propagation into `newproc1`
+
+```bash
+# Compile with runtime GLS hooks only
+./go-build-interceptor -c ./instrumentations/runtime/runtime_hooks.go
+
+# Compile with both runtime and application hooks (recommended for full tracing)
+./go-build-interceptor -c ./instrumentations/runtime/runtime_hooks.go,./instrumentations/hello/generated_hooks.go
+```
+
+#### Using Multiple Hooks Files
+
+You can compile with multiple hooks files by specifying them comma-separated:
+
+```bash
+./go-build-interceptor -c hooks1.go,hooks2.go,hooks3.go
+```
+
+Or use the UI file selector to pick multiple files interactively.
+
 ## Web UI
 
 The included web UI provides an interactive environment for exploring code, generating hooks, and building.
