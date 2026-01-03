@@ -123,6 +123,69 @@ During operation, the tool creates several files:
 | `go-build-modified.log` | Build log with paths updated for instrumented files |
 | `replay_script.sh` | Executable bash script to replay the build |
 
+## Command Line Reference
+
+### Build Capture
+
+| Flag | Description |
+|------|-------------|
+| `--capture` | Capture go build output to go-build.log |
+| `--json` | Capture go build JSON output (recommended) |
+
+### Build Replay
+
+| Flag | Description |
+|------|-------------|
+| `--log <file>` | Path to build log file (default: go-build.log) |
+| `--execute` | Execute the generated replay script |
+| `--interactive` | Step through commands interactively |
+| `--dry-run` | Show commands without executing |
+
+### Analysis
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Show detailed command information |
+| `--dump` | Dump raw parsed commands |
+| `--pack-files` | List files from compile commands |
+| `--pack-functions` | Extract function definitions |
+| `--pack-packages` | List package names |
+| `--pack-packagepath` | Show packages with source paths |
+| `--callgraph` | Generate static call graph |
+| `--workdir` | Inspect WORK directory contents |
+
+### Instrumentation
+
+| Flag | Description |
+|------|-------------|
+| `--compile <file>` | Compile with hook instrumentation |
+| `-c <file>` | Short form of --compile |
+
+### Usage Examples
+
+```bash
+# Capture build output (JSON format - recommended)
+./go-build-interceptor --json
+
+# Capture build output (text format)
+./go-build-interceptor --capture
+
+# Generate and execute replay script
+./go-build-interceptor --log go-build.log --execute
+
+# Interactive execution (step through commands)
+./go-build-interceptor --log go-build.log --interactive
+
+# Extract function definitions from compiled files
+./go-build-interceptor --log go-build.log --pack-functions
+
+# Generate call graph from compiled files
+./go-build-interceptor --log go-build.log --callgraph
+
+# Compile with hook instrumentation
+./go-build-interceptor --compile path/to/hooks.go
+```
+
 ## Hook Context
 
 The `HookContext` interface provides information about the hooked function call:
@@ -165,6 +228,5 @@ For advanced use cases, you can completely rewrite a function's AST:
 
 ## Limitations
 
-- Currently supports before/after style hooks; more complex interception patterns require function rewriting
 - Static call graph analysis may not capture all dynamic dispatch scenarios
 - Some edge cases in Go's build system may not be fully captured
