@@ -3531,14 +3531,18 @@ function showFileSelector(defaultPath = './generated_hooks/generated_hooks.go') 
             const listEl = document.getElementById('fileSelectorList');
             listEl.innerHTML = '';
 
-            // Filter: only directories and .go files
+            // Filter: only directories and .go files, exclude "../" from API response
             const filteredFiles = files.filter(file => {
+                if (file === '../') return false; // We'll add ".." manually
                 const isDirectory = file.endsWith('/');
                 if (isDirectory) return true;
                 return file.endsWith('.go');
             });
 
-            filteredFiles.forEach(file => {
+            // Always add ".." at the top to navigate up (except at root)
+            const allFiles = ['../', ...filteredFiles];
+
+            allFiles.forEach(file => {
                 const isDirectory = file.endsWith('/');
                 const fileName = isDirectory ? file.slice(0, -1) : file;
                 const fullPath = dir === '.' ? fileName : `${dir}/${fileName}`;
@@ -3555,14 +3559,12 @@ function showFileSelector(defaultPath = './generated_hooks/generated_hooks.go') 
                     `;
                     item.addEventListener('click', () => {
                         if (fileName === '..') {
-                            // Go up one level
+                            // Go up one level - append .. to current path
                             if (dir === '.') {
                                 loadDirectory('..');
                             } else {
-                                const parentDir = dir.includes('/')
-                                    ? dir.substring(0, dir.lastIndexOf('/')) || '.'
-                                    : '.';
-                                loadDirectory(parentDir);
+                                // Append /.. to go up from current directory
+                                loadDirectory(dir + '/..');
                             }
                         } else {
                             loadDirectory(fullPath);
