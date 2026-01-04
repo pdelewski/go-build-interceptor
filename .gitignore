@@ -24,10 +24,14 @@ ui/ui
 hello/hello
 simple-http-server/simple-http-server
 
-# Build logs
+# Build metadata directory (contains go-build.log, go-build.json, source-mappings.json, etc.)
+build-metadata/
+
+# Legacy build logs (for backwards compatibility)
 *.log
 go-build.json
 replay_script.sh
+source-mappings.json
 
 # Temporary files
 hello/new-hook/

@@ -36,7 +36,7 @@ func ParseFlags() *Config {
 	// Custom flag for multiple hooks files
 	var hooksFiles stringSliceFlag
 
-	flag.StringVar(&config.LogFile, "log", "go-build.log", "Path to the log file to replay")
+	flag.StringVar(&config.LogFile, "log", "build-metadata/go-build.log", "Path to the log file to replay")
 	flag.BoolVar(&config.DryRun, "dry-run", false, "Show commands without executing them")
 	flag.BoolVar(&config.Dump, "dump", false, "Dump parsed commands to console")
 	flag.BoolVar(&config.Verbose, "verbose", false, "Show detailed command information")

@@ -12,11 +12,16 @@ import (
 // TextCapturer captures go build output in text format
 type TextCapturer struct{}
 
-// Capture runs go build and captures text output to go-build.log
+// Capture runs go build and captures text output to build-metadata/go-build.log
 func (t *TextCapturer) Capture() error {
-	logFile, err := os.Create("go-build.log")
+	if err := EnsureMetadataDir(); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
+	logPath := GetMetadataPath(BuildLogFile)
+	logFile, err := os.Create(logPath)
 	if err != nil {
-		return fmt.Errorf("failed to create go-build.log: %w", err)
+		return fmt.Errorf("failed to create %s: %w", logPath, err)
 	}
 	defer logFile.Close()
 
@@ -29,7 +34,7 @@ func (t *TextCapturer) Capture() error {
 	err = cmd.Run()
 	if err != nil {
 		fmt.Printf("Note: go build exited with error: %v\n", err)
-		fmt.Println("But build commands have been captured to go-build.log")
+		fmt.Printf("But build commands have been captured to %s\n", logPath)
 	}
 
 	return nil
@@ -45,6 +50,10 @@ type JSONCapturer struct{}
 
 // Capture runs go build with JSON output, saves raw JSON, and converts to text
 func (j *JSONCapturer) Capture() error {
+	if err := EnsureMetadataDir(); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
 	fmt.Println("Running: go build -x -a -work -json")
 	cmd := exec.Command("go", "build", "-x", "-a", "-work", "-json")
 
@@ -70,7 +79,8 @@ func (j *JSONCapturer) Capture() error {
 		return err
 	}
 
-	fmt.Printf("Extracted %d commands from JSON and saved to go-build.log\n", len(outputs))
+	logPath := GetMetadataPath(BuildLogFile)
+	fmt.Printf("Extracted %d commands from JSON and saved to %s\n", len(outputs), logPath)
 	return nil
 }
 
@@ -79,11 +89,12 @@ func (j *JSONCapturer) GetDescription() string {
 	return "Captured JSON build output, converted to text format in go-build.log"
 }
 
-// saveRawJSON saves the raw JSON output to go-build.json
+// saveRawJSON saves the raw JSON output to build-metadata/go-build.json
 func saveRawJSON(jsonOutput []byte) error {
-	jsonFile, err := os.Create("go-build.json")
+	jsonPath := GetMetadataPath(BuildJSONFile)
+	jsonFile, err := os.Create(jsonPath)
 	if err != nil {
-		return fmt.Errorf("failed to create go-build.json: %w", err)
+		return fmt.Errorf("failed to create %s: %w", jsonPath, err)
 	}
 	defer jsonFile.Close()
 
@@ -124,11 +135,12 @@ func extractOutputsFromJSON(jsonOutput []byte) ([]string, error) {
 	return allOutputs, nil
 }
 
-// writeTextOutput writes the extracted outputs to go-build.log
+// writeTextOutput writes the extracted outputs to build-metadata/go-build.log
 func writeTextOutput(outputs []string) error {
-	outputFile, err := os.Create("go-build.log")
+	logPath := GetMetadataPath(BuildLogFile)
+	outputFile, err := os.Create(logPath)
 	if err != nil {
-		return fmt.Errorf("failed to create go-build.log: %w", err)
+		return fmt.Errorf("failed to create %s: %w", logPath, err)
 	}
 	defer outputFile.Close()
 

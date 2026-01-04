@@ -71,7 +71,7 @@ func ensureGopls() error {
 
 // ensureBuildLog checks if go-build.log exists and captures it if not
 func ensureBuildLog() error {
-	buildLogPath := filepath.Join(rootDirectory, "go-build.log")
+	buildLogPath := filepath.Join(rootDirectory, "build-metadata", "go-build.log")
 
 	// Check if go-build.log already exists
 	if _, err := os.Stat(buildLogPath); err == nil {
@@ -1444,7 +1444,7 @@ func handleDebug(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read source mappings
-	mappingsPath := filepath.Join(rootDirectory, "source-mappings.json")
+	mappingsPath := filepath.Join(rootDirectory, "build-metadata", "source-mappings.json")
 	var mappings SourceMappings
 	var substitutePaths []string
 
@@ -1644,7 +1644,7 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load source mappings for file path translation
-	mappingsPath := filepath.Join(rootDirectory, "source-mappings.json")
+	mappingsPath := filepath.Join(rootDirectory, "build-metadata", "source-mappings.json")
 	origToInstr := make(map[string]string) // original -> instrumented (WORK dir path)
 	instrToOrig := make(map[string]string) // instrumented -> original
 	var substitutePaths []struct{ From, To string }

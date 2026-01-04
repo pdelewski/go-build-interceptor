@@ -114,14 +114,17 @@ go-build-interceptor/
 
 ## Generated Files
 
-During operation, the tool creates several files:
+During operation, the tool creates several files in the `build-metadata/` directory:
 
 | File | Description |
 |------|-------------|
-| `go-build.log` | Captured build commands (text format) |
-| `go-build.json` | Raw JSON build output (when using --json) |
-| `go-build-modified.log` | Build log with paths updated for instrumented files |
-| `replay_script.sh` | Executable bash script to replay the build |
+| `build-metadata/go-build.log` | Captured build commands (text format) |
+| `build-metadata/go-build.json` | Raw JSON build output (when using --json) |
+| `build-metadata/go-build-modified.log` | Build log with paths updated for instrumented files |
+| `build-metadata/replay_script.sh` | Executable bash script to replay the build |
+| `build-metadata/source-mappings.json` | Source file mappings for debugger integration |
+
+The `build-metadata/` directory is automatically created when running capture or compile commands.
 
 ## Command Line Reference
 
@@ -136,7 +139,7 @@ During operation, the tool creates several files:
 
 | Flag | Description |
 |------|-------------|
-| `--log <file>` | Path to build log file (default: go-build.log) |
+| `--log <file>` | Path to build log file (default: build-metadata/go-build.log) |
 | `--execute` | Execute the generated replay script |
 | `--interactive` | Step through commands interactively |
 | `--dry-run` | Show commands without executing |
@@ -170,17 +173,17 @@ During operation, the tool creates several files:
 # Capture build output (text format)
 ./go-build-interceptor --capture
 
-# Generate and execute replay script
-./go-build-interceptor --log go-build.log --execute
+# Generate and execute replay script (uses default path: build-metadata/go-build.log)
+./go-build-interceptor --execute
 
 # Interactive execution (step through commands)
-./go-build-interceptor --log go-build.log --interactive
+./go-build-interceptor --interactive
 
 # Extract function definitions from compiled files
-./go-build-interceptor --log go-build.log --pack-functions
+./go-build-interceptor --pack-functions
 
 # Generate call graph from compiled files
-./go-build-interceptor --log go-build.log --callgraph
+./go-build-interceptor --callgraph
 
 # Compile with hook instrumentation
 ./go-build-interceptor --compile path/to/hooks.go
