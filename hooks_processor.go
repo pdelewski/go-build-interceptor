@@ -1023,11 +1023,11 @@ func processCompileWithHooksInternal(commands []Command, hooks []HookDefinition,
 			generatedFilePaths, hooksImportPath, workDir, hooksFiles, otelRuntimeFile, mainPackageInfo); err != nil {
 			fmt.Printf("⚠️  Failed to generate modified build log: %v\n", err)
 		} else {
-			fmt.Printf("\n📄 Generated modified build log: go-build-modified.log\n")
+			fmt.Printf("\n📄 Generated modified build log: %s\n", GetMetadataPath(BuildModifiedLogFile))
 			saveSourceMappings(fileReplacements, workDir)
 
 			fmt.Printf("\n🚀 Executing commands from modified build log...\n")
-			if err := executeModifiedBuildLogWithParser("go-build-modified.log"); err != nil {
+			if err := executeModifiedBuildLogWithParser(GetMetadataPath(BuildModifiedLogFile)); err != nil {
 				fmt.Printf("⚠️  Failed to execute modified build log: %v\n", err)
 			} else {
 				fmt.Printf("✅ Successfully executed all commands from modified build log\n")
@@ -1331,18 +1331,18 @@ func processCompileWithHooks(commands []Command, hooksFile string) error {
 		if err := generateModifiedBuildLog(commands, fileReplacements, trampolineFiles, generatedFilePaths, hooksImportPath, workDir, hooksFile, otelRuntimeFile, mainPackageInfo); err != nil {
 			fmt.Printf("⚠️  Failed to generate modified build log: %v\n", err)
 		} else {
-			fmt.Printf("\n📄 Generated modified build log: go-build-modified.log\n")
+			fmt.Printf("\n📄 Generated modified build log: %s\n", GetMetadataPath(BuildModifiedLogFile))
 
 			// Save source mappings for dlv debugger
 			if err := saveSourceMappings(fileReplacements, workDir); err != nil {
 				fmt.Printf("⚠️  Failed to save source mappings: %v\n", err)
 			} else {
-				fmt.Printf("📄 Generated source mappings: source-mappings.json\n")
+				fmt.Printf("📄 Generated source mappings: %s\n", GetMetadataPath(SourceMappingsFile))
 			}
 
 			// Execute commands from the modified build log using existing functionality
 			fmt.Printf("\n🚀 Executing commands from modified build log...\n")
-			if err := executeModifiedBuildLogWithParser("go-build-modified.log"); err != nil {
+			if err := executeModifiedBuildLogWithParser(GetMetadataPath(BuildModifiedLogFile)); err != nil {
 				fmt.Printf("⚠️  Failed to execute modified build log: %v\n", err)
 			} else {
 				fmt.Printf("✅ Successfully executed all commands from modified build log\n")
@@ -1457,16 +1457,20 @@ func saveSourceMappings(fileReplacements map[string]string, currentWorkDir strin
 		return fmt.Errorf("failed to marshal source mappings: %w", err)
 	}
 
-	if err := os.WriteFile("source-mappings.json", data, 0644); err != nil {
-		return fmt.Errorf("failed to write source-mappings.json: %w", err)
+	if err := EnsureMetadataDir(); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+	mappingsPath := GetMetadataPath(SourceMappingsFile)
+	if err := os.WriteFile(mappingsPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", mappingsPath, err)
 	}
 
 	return nil
 }
 
-// getWorkDirFromBuildLog reads the WORK directory from go-build.log
+// getWorkDirFromBuildLog reads the WORK directory from build-metadata/go-build.log
 func getWorkDirFromBuildLog() string {
-	file, err := os.Open("go-build.log")
+	file, err := os.Open(GetMetadataPath(BuildLogFile))
 	if err != nil {
 		return ""
 	}
@@ -1495,9 +1499,10 @@ func generateSourceMappingsFromExisting() error {
 
 	// Parse go-build-modified.log to find instrumented files
 	// Look for lines that reference the WORK directory with .go files
-	modifiedLog, err := os.Open("go-build-modified.log")
+	modifiedLogPath := GetMetadataPath(BuildModifiedLogFile)
+	modifiedLog, err := os.Open(modifiedLogPath)
 	if err != nil {
-		return fmt.Errorf("could not open go-build-modified.log: %w", err)
+		return fmt.Errorf("could not open %s: %w", modifiedLogPath, err)
 	}
 	defer modifiedLog.Close()
 
@@ -1607,7 +1612,7 @@ func generateSourceMappingsFromExisting() error {
 	}
 
 	if len(mappings.Mappings) == 0 {
-		return fmt.Errorf("no instrumented files found in go-build-modified.log")
+		return fmt.Errorf("no instrumented files found in %s", modifiedLogPath)
 	}
 
 	// Write source-mappings.json
@@ -1616,8 +1621,13 @@ func generateSourceMappingsFromExisting() error {
 		return fmt.Errorf("failed to marshal source mappings: %w", err)
 	}
 
-	if err := os.WriteFile("source-mappings.json", data, 0644); err != nil {
-		return fmt.Errorf("failed to write source-mappings.json: %w", err)
+	if err := EnsureMetadataDir(); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
+	sourceMappingsPath := GetMetadataPath(SourceMappingsFile)
+	if err := os.WriteFile(sourceMappingsPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", sourceMappingsPath, err)
 	}
 
 	fmt.Printf("✅ Generated source-mappings.json with %d mappings\n", len(mappings.Mappings))
@@ -2313,7 +2323,10 @@ func copyAndInstrumentFileOnly(sourceFile string, workDir string, buildID string
 
 // generateModifiedBuildLog generates a new build log with updated file paths for instrumented files
 func generateModifiedBuildLog(commands []Command, fileReplacements map[string]string, trampolineFiles map[string]string, generatedFilePaths map[string][]string, hooksImportPath string, workDir string, hooksFile string, otelRuntimeFile string, mainPackageInfo *PackagePathInfo) error {
-	outputFile := "go-build-modified.log"
+	if err := EnsureMetadataDir(); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+	outputFile := GetMetadataPath(BuildModifiedLogFile)
 
 	file, err := os.Create(outputFile)
 	if err != nil {
@@ -2469,7 +2482,10 @@ func generateModifiedBuildLog(commands []Command, fileReplacements map[string]st
 
 // generateModifiedBuildLogMultipleHooks generates a modified build log that compiles all hooks files together
 func generateModifiedBuildLogMultipleHooks(commands []Command, fileReplacements map[string]string, trampolineFiles map[string]string, generatedFilePaths map[string][]string, hooksImportPath string, workDir string, hooksFiles []string, otelRuntimeFile string, mainPackageInfo *PackagePathInfo) error {
-	outputFile := "go-build-modified.log"
+	if err := EnsureMetadataDir(); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+	outputFile := GetMetadataPath(BuildModifiedLogFile)
 
 	file, err := os.Create(outputFile)
 	if err != nil {

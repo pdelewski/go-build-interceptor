@@ -164,8 +164,8 @@ Open http://localhost:9090 in your browser.
 | Command | Description |
 |---------|-------------|
 | `--compile <file>` / `-c <file>` | Build with hook instrumentation |
-| `--capture` | Capture build commands to go-build.log |
-| `--json` | Capture build with JSON output (recommended) |
+| `--capture` | Capture build commands to build-metadata/go-build.log |
+| `--json` | Capture build with JSON output to build-metadata/ (recommended) |
 | `--callgraph` | Show static call graph |
 | `--pack-functions` | List all functions |
 | `--pack-files` | List compiled files |

@@ -172,6 +172,11 @@ func (p *Parser) GenerateScript() error {
 		return nil
 	}
 
+	// Ensure metadata directory exists
+	if err := EnsureMetadataDir(); err != nil {
+		return fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
 	// Create a single shell script with all commands
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n")
@@ -189,7 +194,8 @@ func (p *Parser) GenerateScript() error {
 	script.WriteString("\necho \"Build replay completed!\"\n")
 
 	// Write script to file
-	scriptFile, err := os.Create("replay_script.sh")
+	scriptPath := GetMetadataPath(ReplayScriptFile)
+	scriptFile, err := os.Create(scriptPath)
 	if err != nil {
 		return fmt.Errorf("failed to create script file: %w", err)
 	}
@@ -201,12 +207,12 @@ func (p *Parser) GenerateScript() error {
 	}
 
 	// Make the script executable
-	err = os.Chmod("replay_script.sh", 0755)
+	err = os.Chmod(scriptPath, 0755)
 	if err != nil {
 		return fmt.Errorf("failed to make script executable: %w", err)
 	}
 
-	fmt.Printf("Generated executable script saved to: replay_script.sh\n")
+	fmt.Printf("Generated executable script saved to: %s\n", scriptPath)
 	return nil
 }
 
@@ -222,9 +228,9 @@ func (p *Parser) ExecuteAll() error {
 }
 
 func (p *Parser) ExecuteScript() error {
-	scriptPath := "replay_script.sh"
+	scriptPath := GetMetadataPath(ReplayScriptFile)
 
-	// Check if script file exists in current directory
+	// Check if script file exists
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
 		return fmt.Errorf("replay script does not exist: %s", scriptPath)
 	}
