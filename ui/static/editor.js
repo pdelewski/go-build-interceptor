@@ -3125,54 +3125,21 @@ function toggleWordWrap() {
 }
 
 function zoomIn() {
-    const editor = document.getElementById('editor');
-    const syntaxHighlight = document.getElementById('syntaxHighlight');
-    const currentSize = parseInt(getComputedStyle(editor).fontSize);
-    const newSize = currentSize + 1;
-    
-    // Set font size with !important to override CSS
-    editor.style.setProperty('font-size', newSize + 'px', 'important');
-    
-    if (syntaxHighlight) {
-        syntaxHighlight.style.setProperty('font-size', newSize + 'px', 'important');
-        
-        // Also update Prism.js elements
-        const preElement = syntaxHighlight.querySelector('pre[class*="language-"]');
-        const codeElement = syntaxHighlight.querySelector('code[class*="language-"]');
-        
-        if (preElement) {
-            preElement.style.setProperty('font-size', newSize + 'px', 'important');
-        }
-        if (codeElement) {
-            codeElement.style.setProperty('font-size', newSize + 'px', 'important');
-        }
+    const monacoEditor = window.codeEditor?.monacoEditor;
+    if (monacoEditor) {
+        const currentSize = monacoEditor.getOption(monaco.editor.EditorOption.fontSize);
+        const newSize = currentSize + 2;
+        monacoEditor.updateOptions({ fontSize: newSize });
     }
 }
 
 function zoomOut() {
-    const editor = document.getElementById('editor');
-    const syntaxHighlight = document.getElementById('syntaxHighlight');
-    const currentSize = parseInt(getComputedStyle(editor).fontSize);
-    
-    if (currentSize > 10) {
-        const newSize = currentSize - 1;
-        
-        // Set font size with !important to override CSS
-        editor.style.setProperty('font-size', newSize + 'px', 'important');
-        
-        if (syntaxHighlight) {
-            syntaxHighlight.style.setProperty('font-size', newSize + 'px', 'important');
-            
-            // Also update Prism.js elements
-            const preElement = syntaxHighlight.querySelector('pre[class*="language-"]');
-            const codeElement = syntaxHighlight.querySelector('code[class*="language-"]');
-            
-            if (preElement) {
-                preElement.style.setProperty('font-size', newSize + 'px', 'important');
-            }
-            if (codeElement) {
-                codeElement.style.setProperty('font-size', newSize + 'px', 'important');
-            }
+    const monacoEditor = window.codeEditor?.monacoEditor;
+    if (monacoEditor) {
+        const currentSize = monacoEditor.getOption(monaco.editor.EditorOption.fontSize);
+        if (currentSize > 8) {
+            const newSize = currentSize - 2;
+            monacoEditor.updateOptions({ fontSize: newSize });
         }
     }
 }
