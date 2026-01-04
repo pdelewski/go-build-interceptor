@@ -24,7 +24,7 @@ monaco: deps
 
 # Run the UI server (default: hello project)
 run: build
-	./ui -dir ../hello
+	./ui -dir ../examples/hello
 
 # Run with custom directory
 # Usage: make run-dir DIR=/path/to/project
