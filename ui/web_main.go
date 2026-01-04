@@ -870,9 +870,11 @@ func createHooksModule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DirName     string `json:"dirName"`
-		ModuleName  string `json:"moduleName"`
-		FileContent string `json:"fileContent"`
+		DirName        string `json:"dirName"`
+		ModuleName     string `json:"moduleName"`
+		FileContent    string `json:"fileContent"`
+		FileName       string `json:"fileName"`
+		ForceOverwrite bool   `json:"forceOverwrite"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -900,8 +902,31 @@ func createHooksModule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Default filename
+	fileName := req.FileName
+	if fileName == "" {
+		fileName = "generated_hooks.go"
+	}
+
+	// Check if file already exists
+	hooksFilePath := filepath.Join(fullPath, fileName)
+	if _, err := os.Stat(hooksFilePath); err == nil {
+		// File exists
+		if !req.ForceOverwrite {
+			// Return a response indicating file exists and needs confirmation
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":    false,
+				"fileExists": true,
+				"filePath":   req.DirName + "/" + fileName,
+				"message":    fmt.Sprintf("File '%s' already exists. Do you want to overwrite it?", req.DirName+"/"+fileName),
+			})
+			return
+		}
+		fmt.Printf("⚠️ Overwriting existing file: %s\n", hooksFilePath)
+	}
+
 	// Write the hooks file
-	hooksFilePath := filepath.Join(fullPath, "generated_hooks.go")
 	if err := ioutil.WriteFile(hooksFilePath, []byte(req.FileContent), 0644); err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to write hooks file: %v", err))
 		return

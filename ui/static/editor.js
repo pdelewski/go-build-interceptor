@@ -2463,6 +2463,13 @@ async function generateHooksFromFunctions() {
 
     console.log('🔧 Generating hooks for', selectedItems.length, 'functions:', selectedItems.map(f => f.name));
 
+    // Show directory selector dialog
+    const dirSelection = await showDirectorySelector('generated_hooks');
+    if (!dirSelection) {
+        console.log('Generation cancelled by user');
+        return;
+    }
+
     // Show progress indicator
     setGenerateHooksProgress(true);
 
@@ -2472,30 +2479,24 @@ async function generateHooksFromFunctions() {
     // Generate the hooks file content
     const hooksContent = generateHooksCode(functionNames);
 
-    // Directory name for the hooks module
-    const dirName = 'generated_hooks';
+    // Use the directory from the selector
+    const dirName = dirSelection.directory;
 
     try {
         // Call backend API to create the hooks module
-        const response = await fetch('/api/create-hooks-module', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                dirName: dirName,
-                fileContent: hooksContent
-            })
-        });
-
-        const result = await response.json();
+        const result = await createHooksModuleWithOverwriteCheck(dirName, dirSelection.fileName, hooksContent);
 
         if (result.success) {
             console.log('✅ Created hooks module:', result.directory);
             console.log('📝 Hooks file:', result.hooksFile);
             console.log('📦 Module name:', result.moduleName);
 
+            // Build the filename using the user-specified filename
+            const hooksFilePath = dirName + '/' + dirSelection.fileName;
+
             // Open the generated file in the editor (but don't switch side panel)
             if (window.codeEditor) {
-                const filename = result.hooksFile;
+                const filename = hooksFilePath;
                 const content = hooksContent;
 
                 // Check if tab already exists
@@ -2526,7 +2527,7 @@ async function generateHooksFromFunctions() {
             notification.innerHTML = `
                 <div style="background: #4caf50; color: white; padding: 10px 15px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
                     <strong>✅ Hooks module created!</strong><br>
-                    <small>${result.hooksFile}</small>
+                    <small>${hooksFilePath}</small>
                 </div>
             `;
             notification.style.cssText = 'position: fixed; top: 60px; right: 20px; z-index: 10000;';
@@ -2536,6 +2537,8 @@ async function generateHooksFromFunctions() {
             setTimeout(() => {
                 notification.remove();
             }, 4000);
+        } else if (result.cancelled) {
+            console.log('Generation cancelled by user (file exists)');
         } else {
             console.error('❌ Failed to create hooks module:', result.error);
             alert('Failed to create hooks module: ' + result.error);
@@ -2549,6 +2552,35 @@ async function generateHooksFromFunctions() {
     }
 }
 
+// Helper function to create hooks module with overwrite confirmation
+async function createHooksModuleWithOverwriteCheck(dirName, fileName, fileContent, forceOverwrite = false) {
+    const response = await fetch('/api/create-hooks-module', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            dirName: dirName,
+            fileName: fileName,
+            fileContent: fileContent,
+            forceOverwrite: forceOverwrite
+        })
+    });
+
+    const result = await response.json();
+
+    // Check if file exists and needs confirmation
+    if (result.fileExists && !forceOverwrite) {
+        const confirmOverwrite = confirm(`Warning: ${result.filePath} already exists.\n\nDo you want to overwrite it?`);
+        if (confirmOverwrite) {
+            // Retry with forceOverwrite = true
+            return createHooksModuleWithOverwriteCheck(dirName, fileName, fileContent, true);
+        } else {
+            return { success: false, cancelled: true };
+        }
+    }
+
+    return result;
+}
+
 // Generate hooks file from selected call graph functions
 async function generateHooksFile() {
     const selectedItems = getSelectedCallGraphItems();
@@ -2559,6 +2591,13 @@ async function generateHooksFile() {
 
     console.log('🔧 Generating hooks for', selectedItems.length, 'functions:', selectedItems.map(n => n.name));
 
+    // Show directory selector dialog
+    const dirSelection = await showDirectorySelector('generated_hooks');
+    if (!dirSelection) {
+        console.log('Generation cancelled by user');
+        return;
+    }
+
     // Show progress indicator
     setGenerateHooksProgress(true);
 
@@ -2568,21 +2607,18 @@ async function generateHooksFile() {
     // Generate the hooks file content
     const hooksContent = generateHooksCode(functionNames);
 
-    // Directory name for the hooks module
-    const dirName = 'generated_hooks';
+    // Use the directory from the selector
+    const dirName = dirSelection.directory;
 
     try {
-        // Call backend API to create the hooks module
-        const response = await fetch('/api/create-hooks-module', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                dirName: dirName,
-                fileContent: hooksContent
-            })
-        });
+        // Call backend API to create the hooks module with overwrite check
+        const result = await createHooksModuleWithOverwriteCheck(dirName, dirSelection.fileName, hooksContent);
 
-        const result = await response.json();
+        // Check if user cancelled the overwrite
+        if (result.cancelled) {
+            console.log('Overwrite cancelled by user');
+            return;
+        }
 
         if (result.success) {
             console.log('✅ Created hooks module:', result.directory);
@@ -3377,6 +3413,217 @@ function addTerminalOutput(text, className = '') {
     
     // Auto-scroll to bottom
     terminalContent.scrollTop = terminalContent.scrollHeight;
+}
+
+// Directory selector dialog for choosing where to save generated hooks
+function showDirectorySelector(defaultDirName = 'generated_hooks') {
+    return new Promise(async (resolve) => {
+        let currentDir = '.';
+        let selectedDirName = defaultDirName;
+
+        // Remove existing dialog if present
+        const existing = document.getElementById('dirSelectorDialog');
+        if (existing) {
+            existing.remove();
+        }
+
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'dirSelectorOverlay';
+        overlay.className = 'file-selector-overlay';
+
+        // Create dialog
+        const dialog = document.createElement('div');
+        dialog.id = 'dirSelectorDialog';
+        dialog.className = 'file-selector-dialog';
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'file-selector-header';
+        header.innerHTML = '<span>Choose Save Location for Generated Hooks</span>';
+
+        // Path bar showing current directory
+        const pathBar = document.createElement('div');
+        pathBar.className = 'file-selector-path';
+        pathBar.id = 'dirSelectorPath';
+
+        // Directory name and filename inputs
+        const inputSection = document.createElement('div');
+        inputSection.className = 'file-selector-actions';
+        inputSection.style.flexDirection = 'column';
+        inputSection.style.alignItems = 'stretch';
+        inputSection.style.gap = '8px';
+        inputSection.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="white-space: nowrap; color: #ccc;">Directory name:</label>
+                <input type="text" id="dirNameInput" class="file-selector-filter"
+                       value="${defaultDirName}" placeholder="Enter directory name"
+                       style="flex: 1; margin: 0;">
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="white-space: nowrap; color: #ccc;">Filename:</label>
+                <input type="text" id="fileNameInput" class="file-selector-filter"
+                       value="generated_hooks.go" placeholder="Enter filename"
+                       style="flex: 1; margin: 0;">
+            </div>
+            <div id="fullPathPreview" style="font-size: 11px; color: #888; padding: 4px 0;">
+                Will save to: <span style="color: #4fc3f7;">./${defaultDirName}/generated_hooks.go</span>
+            </div>
+        `;
+
+        // Directory list container
+        const dirList = document.createElement('div');
+        dirList.className = 'file-selector-list';
+        dirList.id = 'dirSelectorList';
+        dirList.style.maxHeight = '300px';
+
+        // Footer with OK/Cancel
+        const footer = document.createElement('div');
+        footer.className = 'file-selector-footer';
+        footer.innerHTML = `
+            <button class="file-selector-btn file-selector-cancel" id="dirCancelBtn">Cancel</button>
+            <button class="file-selector-btn file-selector-ok" id="dirOkBtn">Save Here</button>
+        `;
+
+        // Assemble dialog
+        dialog.appendChild(header);
+        dialog.appendChild(pathBar);
+        dialog.appendChild(inputSection);
+        dialog.appendChild(dirList);
+        dialog.appendChild(footer);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        // Update the full path preview
+        function updatePathPreview() {
+            const preview = document.getElementById('fullPathPreview');
+            const dirInput = document.getElementById('dirNameInput');
+            const fileInput = document.getElementById('fileNameInput');
+            if (preview && dirInput && fileInput) {
+                const dirName = dirInput.value.trim() || defaultDirName;
+                const fileName = fileInput.value.trim() || 'generated_hooks.go';
+                const basePath = currentDir === '.' ? '' : currentDir + '/';
+                const fullPath = basePath + dirName + '/' + fileName;
+                preview.innerHTML = `Will save to: <span style="color: #4fc3f7;">./${fullPath}</span>`;
+            }
+        }
+
+        // Load directory contents
+        async function loadDirectory(dir) {
+            currentDir = dir;
+            const pathEl = document.getElementById('dirSelectorPath');
+            const listEl = document.getElementById('dirSelectorList');
+
+            pathEl.innerHTML = `<span class="path-icon">📁</span> ${dir === '.' ? 'Current Directory' : dir}`;
+            listEl.innerHTML = '<div class="file-selector-loading">Loading...</div>';
+
+            updatePathPreview();
+
+            try {
+                const response = await fetch(`/api/list?dir=${encodeURIComponent(dir)}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    renderDirectories(result.files, dir);
+                } else {
+                    listEl.innerHTML = `<div class="file-selector-error">Error: ${result.error}</div>`;
+                }
+            } catch (e) {
+                console.error('Failed to load directory:', e);
+                listEl.innerHTML = `<div class="file-selector-error">Failed to load directory</div>`;
+            }
+        }
+
+        // Render directory contents (directories only)
+        function renderDirectories(files, dir) {
+            const listEl = document.getElementById('dirSelectorList');
+            listEl.innerHTML = '';
+
+            // Filter: only directories, exclude "../" from API response
+            const filteredDirs = files.filter(file => {
+                if (file === '../') return false;
+                return file.endsWith('/');
+            });
+
+            // Always add ".." at the top to navigate up (except at root)
+            const allDirs = ['../', ...filteredDirs];
+
+            allDirs.forEach(file => {
+                const dirName = file.slice(0, -1);
+                const fullPath = dir === '.' ? dirName : `${dir}/${dirName}`;
+
+                const item = document.createElement('div');
+                item.className = 'file-selector-item directory';
+                item.innerHTML = `
+                    <span class="file-selector-icon">📁</span>
+                    <span class="file-selector-name">${dirName}</span>
+                `;
+                item.addEventListener('click', () => {
+                    if (dirName === '..') {
+                        if (dir === '.') {
+                            loadDirectory('..');
+                        } else {
+                            loadDirectory(dir + '/..');
+                        }
+                    } else {
+                        loadDirectory(fullPath);
+                    }
+                });
+
+                listEl.appendChild(item);
+            });
+
+            // Show message if no subdirectories
+            if (filteredDirs.length === 0) {
+                const noSubdirs = document.createElement('div');
+                noSubdirs.style.cssText = 'padding: 10px; color: #888; font-style: italic;';
+                noSubdirs.textContent = 'No subdirectories';
+                listEl.appendChild(noSubdirs);
+            }
+        }
+
+        // Setup input change handlers
+        document.getElementById('dirNameInput').addEventListener('input', updatePathPreview);
+        document.getElementById('fileNameInput').addEventListener('input', updatePathPreview);
+
+        // Event handlers
+        document.getElementById('dirCancelBtn').addEventListener('click', () => {
+            overlay.remove();
+            resolve(null);
+        });
+
+        document.getElementById('dirOkBtn').addEventListener('click', () => {
+            const input = document.getElementById('dirNameInput');
+            const fileInput = document.getElementById('fileNameInput');
+            const dirName = input.value.trim() || defaultDirName;
+            const fileName = fileInput.value.trim() || 'generated_hooks.go';
+            const basePath = currentDir === '.' ? '' : currentDir + '/';
+            overlay.remove();
+            resolve({
+                directory: basePath + dirName,
+                dirName: dirName,
+                fileName: fileName
+            });
+        });
+
+        // Close on overlay click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+                resolve(null);
+            }
+        });
+
+        // Handle Enter key in input
+        document.getElementById('dirNameInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('dirOkBtn').click();
+            }
+        });
+
+        // Load initial directory
+        loadDirectory('.');
+    });
 }
 
 // File selector dialog for selecting hooks files - with directory navigation
