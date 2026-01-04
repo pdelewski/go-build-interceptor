@@ -3887,6 +3887,47 @@ async function runDebug() {
     }
 }
 
+// Clean up build artifacts (build-metadata and .debug-build directories)
+async function runCleanup() {
+    // Show terminal and clear previous output
+    showTerminal();
+    clearTerminal();
+    addTerminalOutput('$ Cleaning build artifacts...', 'terminal-command');
+
+    try {
+        const response = await fetch('/api/cleanup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            addTerminalOutput('', '');
+            addTerminalOutput('✅ ' + data.message, 'terminal-success');
+            if (data.deletedDirs && data.deletedDirs.length > 0) {
+                addTerminalOutput('Deleted directories: ' + data.deletedDirs.join(', '), 'terminal-info');
+            }
+            // Refresh the file explorer to reflect the changes
+            loadFilesIntoExplorer();
+        } else {
+            addTerminalOutput('', '');
+            addTerminalOutput('⚠️ ' + data.message, 'terminal-warning');
+            if (data.errors && data.errors.length > 0) {
+                data.errors.forEach(err => {
+                    addTerminalOutput('❌ ' + err, 'terminal-error');
+                });
+            }
+        }
+    } catch (err) {
+        console.error('Cleanup error:', err);
+        addTerminalOutput('', '');
+        addTerminalOutput('❌ Error: ' + err.message, 'terminal-error');
+    }
+}
+
 function connectDebugWebSocket(port) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     debugSocket = new WebSocket(`${wsProtocol}//${window.location.host}/ws/debug?port=${port}`);

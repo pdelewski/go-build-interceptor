@@ -1365,7 +1365,7 @@ func extractWorkDirFromCommands(commands []Command) string {
 
 // saveSourceMappings saves the file mappings to source-mappings.json for dlv debugger
 // It reads the WORK directory from go-build.log (matching what's in the compiled binary)
-// and copies instrumented source files to a permanent location (.otel-build/debug/).
+// and copies instrumented source files to a permanent location (.debug-build/debug/).
 // The mappings contain:
 // - original: the original source file path
 // - instrumented: the WORK directory path (what's compiled into the binary)
@@ -1382,7 +1382,7 @@ func saveSourceMappings(fileReplacements map[string]string, currentWorkDir strin
 	}
 
 	// Create permanent directory for instrumented sources
-	debugDir := ".otel-build/debug"
+	debugDir := ".debug-build/debug"
 	if err := os.MkdirAll(debugDir, 0755); err != nil {
 		return fmt.Errorf("failed to create debug directory: %w", err)
 	}
@@ -1507,7 +1507,7 @@ func generateSourceMappingsFromExisting() error {
 	defer modifiedLog.Close()
 
 	// Create debug directory
-	debugDir := ".otel-build/debug"
+	debugDir := ".debug-build/debug"
 	if err := os.MkdirAll(debugDir, 0755); err != nil {
 		return fmt.Errorf("failed to create debug directory: %w", err)
 	}

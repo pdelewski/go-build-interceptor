@@ -280,6 +280,7 @@ func main() {
 	http.HandleFunc("/api/run-executable", getRunExecutable)
 	http.HandleFunc("/api/create-hooks-module", createHooksModule)
 	http.HandleFunc("/api/debug", handleDebug)
+	http.HandleFunc("/api/cleanup", handleCleanup)
 
 	// LSP WebSocket endpoint
 	http.HandleFunc("/ws/lsp", handleLSPWebSocket)
@@ -533,6 +534,9 @@ func serveEditor(w http.ResponseWriter, r *http.Request) {
             </button>
             <button class="toolbar-button" onclick="runDebug()" title="Debug with Delve">
                 <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1a4 4 0 0 0-4 4v1H3v2h1v1.5L2.5 11 3 12l1.5-1H6v2.17A3.001 3.001 0 0 0 8 16a3.001 3.001 0 0 0 2-2.83V11h1.5l1.5 1 .5-1-1.5-1.5V8h1V6h-1V5a4 4 0 0 0-4-4zm-2 4a2 2 0 1 1 4 0v1H6V5zm0 3h4v3a2 2 0 1 1-4 0V8z"/></svg>
+            </button>
+            <button class="toolbar-button" onclick="runCleanup()" title="Clean Build Artifacts">
+                <svg width="16" height="16" viewBox="0 0 16 16"><path fill="currentColor" d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill="currentColor" fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4L4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
             </button>
         </div>
     </div>
@@ -1935,4 +1939,56 @@ func sendErrorResponse(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleCleanup removes build-metadata and .debug-build directories
+func handleCleanup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	fmt.Printf("🧹 Cleaning build artifacts...\n")
+
+	var deletedDirs []string
+	var errors []string
+
+	// Directories to clean
+	dirsToClean := []string{"build-metadata", ".debug-build"}
+
+	for _, dir := range dirsToClean {
+		dirPath := filepath.Join(rootDirectory, dir)
+		if _, err := os.Stat(dirPath); err == nil {
+			// Directory exists, remove it
+			if err := os.RemoveAll(dirPath); err != nil {
+				errors = append(errors, fmt.Sprintf("Failed to remove %s: %v", dir, err))
+				fmt.Printf("❌ Failed to remove %s: %v\n", dir, err)
+			} else {
+				deletedDirs = append(deletedDirs, dir)
+				fmt.Printf("✅ Removed %s\n", dir)
+			}
+		} else {
+			fmt.Printf("ℹ️ %s does not exist, skipping\n", dir)
+		}
+	}
+
+	// Build response message
+	var message string
+	if len(deletedDirs) > 0 {
+		message = fmt.Sprintf("Cleaned: %s", strings.Join(deletedDirs, ", "))
+	} else {
+		message = "No build artifacts to clean"
+	}
+
+	if len(errors) > 0 {
+		message += "\nErrors: " + strings.Join(errors, "; ")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     len(errors) == 0,
+		"message":     message,
+		"deletedDirs": deletedDirs,
+		"errors":      errors,
+	})
 }
