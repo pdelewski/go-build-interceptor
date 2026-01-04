@@ -3691,7 +3691,7 @@ function showFileSelector(defaultPath = './generated_hooks/generated_hooks.go') 
     });
 }
 
-// Update the runCompile function to show output in message window
+// Update the runCompile function to show output in terminal
 async function runCompile() {
     const hooksFile = await showFileSelector('./generated_hooks/generated_hooks.go');
 
@@ -3699,8 +3699,11 @@ async function runCompile() {
         return;
     }
 
-    // Show loading message
-    showMessageWindow('Compiling...', 'Running: go-build-interceptor --compile ' + hooksFile.trim(), 'info');
+    // Show terminal and clear previous output
+    showTerminal();
+    clearTerminal();
+    addTerminalOutput('$ go-build-interceptor --compile ' + hooksFile.trim(), 'terminal-command');
+    addTerminalOutput('Compiling...', 'terminal-info');
 
     try {
         const response = await fetch('/api/compile', {
@@ -3714,15 +3717,22 @@ async function runCompile() {
         const data = await response.json();
 
         if (data.error) {
-            showMessageWindow('Compile Failed', data.error, 'error');
+            addTerminalOutput('', '');
+            addTerminalOutput('❌ Compile Failed:', 'terminal-error');
+            addTerminalOutput(data.error, 'terminal-error');
         } else {
-            // Use data.content (from backend) - show full output
             const output = data.content || 'Compile completed successfully (no output)';
-            showMessageWindow('Compile Output', output, 'success');
+            addTerminalOutput('', '');
+            output.split('\n').forEach(line => {
+                addTerminalOutput(line, '');
+            });
+            addTerminalOutput('', '');
+            addTerminalOutput('✅ Compile completed successfully', 'terminal-success');
         }
     } catch (err) {
         console.error('Compile error:', err);
-        showMessageWindow('Compile Error', 'Failed to run compile: ' + err.message, 'error');
+        addTerminalOutput('', '');
+        addTerminalOutput('❌ Error: ' + err.message, 'terminal-error');
     }
 }
 
@@ -3781,8 +3791,11 @@ async function runExecutable() {
         return;
     }
 
-    // Show loading message
-    showMessageWindow('Running...', 'Executing: ' + execPath.trim(), 'info');
+    // Show terminal and clear previous output
+    showTerminal();
+    clearTerminal();
+    addTerminalOutput('$ ' + execPath.trim(), 'terminal-command');
+    addTerminalOutput('Running...', 'terminal-info');
 
     try {
         const response = await fetch('/api/run-executable', {
@@ -3796,14 +3809,22 @@ async function runExecutable() {
         const data = await response.json();
 
         if (data.error) {
-            showMessageWindow('Execution Failed', data.error, 'error');
+            addTerminalOutput('', '');
+            addTerminalOutput('❌ Execution Failed:', 'terminal-error');
+            addTerminalOutput(data.error, 'terminal-error');
         } else {
             const output = data.content || 'No output';
-            showMessageWindow('Execution Output', output, 'success');
+            addTerminalOutput('', '');
+            output.split('\n').forEach(line => {
+                addTerminalOutput(line, '');
+            });
+            addTerminalOutput('', '');
+            addTerminalOutput('✅ Execution completed', 'terminal-success');
         }
     } catch (err) {
         console.error('Execution error:', err);
-        showMessageWindow('Execution Error', 'Failed to run executable: ' + err.message, 'error');
+        addTerminalOutput('', '');
+        addTerminalOutput('❌ Error: ' + err.message, 'terminal-error');
     }
 }
 
