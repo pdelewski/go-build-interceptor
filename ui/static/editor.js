@@ -1776,63 +1776,83 @@ async function showFunctions() {
                 // Group functions by file or show all
                 lines.forEach(line => {
                     let trimmedLine = line.trim();
-                    
+
                     // Remove leading '-' if present
                     if (trimmedLine.startsWith('- ')) {
                         trimmedLine = trimmedLine.substring(2);
                     } else if (trimmedLine.startsWith('-')) {
                         trimmedLine = trimmedLine.substring(1);
                     }
-                    
+
                     if (trimmedLine) {
-                        // Parse function name from the line (format: "funcName" or "package.funcName")
-                        const funcName = trimmedLine.split('(')[0].trim();
-                        const funcData = { name: funcName, fullSignature: trimmedLine };
+                        // Check if this is metadata/info line (no checkbox)
+                        const isMetadata = trimmedLine.startsWith('Parsed ') ||
+                                          trimmedLine.startsWith('===') ||
+                                          trimmedLine.startsWith('Found ') ||
+                                          trimmedLine.startsWith('File:') ||
+                                          trimmedLine.match(/^\/.*\.go:$/); // File path lines like "/path/to/file.go:"
 
-                        // Try to parse function information
-                        const functionItem = document.createElement('div');
-                        functionItem.className = 'explorer-item function-item';
-                        functionItem.tabIndex = 0; // Make focusable for keyboard navigation
+                        if (isMetadata) {
+                            // Display metadata without checkbox - use indentation for file paths
+                            const metaItem = document.createElement('div');
+                            metaItem.className = 'explorer-item metadata-item';
+                            const isFilePath = trimmedLine.match(/^\/.*\.go:$/) || trimmedLine.startsWith('File:');
+                            metaItem.style.cssText = isFilePath
+                                ? 'padding: 6px 8px 4px 8px; color: #dcdcaa; font-weight: bold; cursor: default; margin-top: 8px;'
+                                : 'padding: 4px 8px 4px 12px; color: #888; font-style: italic; cursor: default;';
+                            metaItem.textContent = trimmedLine;
+                            fileTree.appendChild(metaItem);
+                        } else {
+                            // Parse function name from the line (format: "funcName" or "package.funcName")
+                            const funcName = trimmedLine.split('(')[0].trim();
+                            const funcData = { name: funcName, fullSignature: trimmedLine };
 
-                        // Add checkbox for selection
-                        const checkbox = document.createElement('input');
-                        checkbox.type = 'checkbox';
-                        checkbox.className = 'function-checkbox';
-                        checkbox.funcRef = funcData; // Store reference to function data
-                        checkbox.addEventListener('click', (e) => {
-                            e.stopPropagation(); // Prevent item selection when clicking checkbox
-                        });
-                        checkbox.addEventListener('change', (e) => {
-                            if (e.target.checked) {
-                                selectedFunctionItems.add(funcData);
-                                functionItem.style.backgroundColor = 'rgba(0, 122, 204, 0.2)';
-                            } else {
-                                selectedFunctionItems.delete(funcData);
-                                functionItem.style.backgroundColor = '';
-                            }
-                            updateFunctionSelectionCount();
-                            console.log('⚙️ Selected functions:', selectedFunctionItems.size);
-                        });
+                            // Try to parse function information
+                            const functionItem = document.createElement('div');
+                            functionItem.className = 'explorer-item function-item';
+                            functionItem.tabIndex = 0; // Make focusable for keyboard navigation
+                            functionItem.style.paddingLeft = '20px'; // Indent functions under file headers
 
-                        // Add item content wrapper
-                        const itemContent = document.createElement('div');
-                        itemContent.className = 'explorer-item-content';
+                            // Add checkbox for selection
+                            const checkbox = document.createElement('input');
+                            checkbox.type = 'checkbox';
+                            checkbox.className = 'function-checkbox';
+                            checkbox.funcRef = funcData; // Store reference to function data
+                            checkbox.addEventListener('click', (e) => {
+                                e.stopPropagation(); // Prevent item selection when clicking checkbox
+                            });
+                            checkbox.addEventListener('change', (e) => {
+                                if (e.target.checked) {
+                                    selectedFunctionItems.add(funcData);
+                                    functionItem.style.backgroundColor = 'rgba(0, 122, 204, 0.2)';
+                                } else {
+                                    selectedFunctionItems.delete(funcData);
+                                    functionItem.style.backgroundColor = '';
+                                }
+                                updateFunctionSelectionCount();
+                                console.log('⚙️ Selected functions:', selectedFunctionItems.size);
+                            });
 
-                        // Add selection event listeners
-                        functionItem.addEventListener('click', (e) => {
-                            e.preventDefault();
-                            window.codeEditor?.selectExplorerItem(functionItem);
-                        });
+                            // Add item content wrapper
+                            const itemContent = document.createElement('div');
+                            itemContent.className = 'explorer-item-content';
 
-                        // Set text content and title
-                        itemContent.textContent = trimmedLine;
-                        functionItem.title = trimmedLine;
+                            // Add selection event listeners
+                            functionItem.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                window.codeEditor?.selectExplorerItem(functionItem);
+                            });
 
-                        // Append checkbox and content to the function item
-                        functionItem.appendChild(checkbox);
-                        functionItem.appendChild(itemContent);
+                            // Set text content and title
+                            itemContent.textContent = trimmedLine;
+                            functionItem.title = trimmedLine;
 
-                        fileTree.appendChild(functionItem);
+                            // Append checkbox and content to the function item
+                            functionItem.appendChild(checkbox);
+                            functionItem.appendChild(itemContent);
+
+                            fileTree.appendChild(functionItem);
+                        }
                     }
                 });
                 
@@ -2823,43 +2843,59 @@ async function showPackages() {
                 // Display package information
                 lines.forEach(line => {
                     let trimmedLine = line.trim();
-                    
+
                     // Remove leading '-' if present
                     if (trimmedLine.startsWith('- ')) {
                         trimmedLine = trimmedLine.substring(2);
                     } else if (trimmedLine.startsWith('-')) {
                         trimmedLine = trimmedLine.substring(1);
                     }
-                    
+
                     if (trimmedLine) {
-                        const packageItem = document.createElement('div');
-                        packageItem.className = 'explorer-item package-item';
-                        packageItem.tabIndex = 0; // Make focusable for keyboard navigation
-                        
-                        // Add checkbox for selection
-                        const checkbox = document.createElement('input');
-                        checkbox.type = 'checkbox';
-                        checkbox.className = 'explorer-checkbox';
-                        checkbox.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                        });
-                        
-                        // Create content wrapper
-                        const contentWrapper = document.createElement('div');
-                        contentWrapper.className = 'explorer-item-content';
-                        contentWrapper.textContent = trimmedLine;
-                        
-                        // Add selection event listeners
-                        packageItem.addEventListener('click', (e) => {
-                            e.preventDefault();
-                            window.codeEditor?.selectExplorerItem(packageItem);
-                        });
-                        
-                        packageItem.appendChild(checkbox);
-                        packageItem.appendChild(contentWrapper);
-                        packageItem.title = trimmedLine; // Show full name on hover
-                        
-                        fileTree.appendChild(packageItem);
+                        // Check if this is metadata/info line (no checkbox)
+                        const isMetadata = trimmedLine.startsWith('Parsed ') ||
+                                          trimmedLine.startsWith('===') ||
+                                          trimmedLine.startsWith('Found ') ||
+                                          trimmedLine.startsWith('File:');
+
+                        if (isMetadata) {
+                            // Display metadata without checkbox
+                            const metaItem = document.createElement('div');
+                            metaItem.className = 'explorer-item metadata-item';
+                            metaItem.style.cssText = 'padding: 4px 8px 4px 12px; color: #888; font-style: italic; cursor: default;';
+                            metaItem.textContent = trimmedLine;
+                            fileTree.appendChild(metaItem);
+                        } else {
+                            // Display package with checkbox
+                            const packageItem = document.createElement('div');
+                            packageItem.className = 'explorer-item package-item';
+                            packageItem.tabIndex = 0; // Make focusable for keyboard navigation
+
+                            // Add checkbox for selection
+                            const checkbox = document.createElement('input');
+                            checkbox.type = 'checkbox';
+                            checkbox.className = 'explorer-checkbox';
+                            checkbox.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                            });
+
+                            // Create content wrapper
+                            const contentWrapper = document.createElement('div');
+                            contentWrapper.className = 'explorer-item-content';
+                            contentWrapper.textContent = trimmedLine;
+
+                            // Add selection event listeners
+                            packageItem.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                window.codeEditor?.selectExplorerItem(packageItem);
+                            });
+
+                            packageItem.appendChild(checkbox);
+                            packageItem.appendChild(contentWrapper);
+                            packageItem.title = trimmedLine; // Show full name on hover
+
+                            fileTree.appendChild(packageItem);
+                        }
                     }
                 });
                 
