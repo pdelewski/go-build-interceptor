@@ -1710,8 +1710,11 @@ function redoAction() {
 }
 
 function findInFile() {
-    window.codeEditor?.switchSidePanel('search');
-    document.getElementById('searchInput')?.focus();
+    // Use Monaco's built-in find widget
+    if (window.codeEditor?.monacoEditor) {
+        window.codeEditor.monacoEditor.focus();
+        window.codeEditor.monacoEditor.trigger('keyboard', 'actions.find');
+    }
 }
 
 function toggleExplorer() {
