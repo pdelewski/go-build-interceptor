@@ -131,10 +131,18 @@ The included web UI provides an interactive environment for exploring code, gene
 
 ### Setup
 
+**Linux/macOS:**
 ```bash
 cd ui
 make setup    # Install dependencies & build
 make run      # Run with default project
+```
+
+**Windows:**
+```cmd
+cd ui
+build.bat setup    # Install dependencies & build
+build.bat run      # Run with default project
 ```
 
 Or manually:
@@ -182,7 +190,7 @@ Open http://localhost:9090 in your browser.
 ## Requirements
 
 - Go 1.18+
-- Unix-like OS (Linux, macOS)
+- Linux, macOS, or Windows
 
 ## License
 
