@@ -1681,6 +1681,7 @@ type DlvResponse struct {
 
 var dlvRequestID = 0
 var dlvRequestMethods = make(map[int]string) // Track request ID -> method name
+var dlvRequestMutex sync.Mutex               // Protects dlvRequestID and dlvRequestMethods
 
 // translateFilePaths recursively translates file paths in a JSON structure
 // from instrumented paths back to original paths
@@ -1863,8 +1864,10 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Parsed dlv response - ID: %d, Error: %v\n", dlvResp.ID, dlvResp.Error)
 
 				// Get the method name for this request ID
+				dlvRequestMutex.Lock()
 				method := dlvRequestMethods[dlvResp.ID]
 				delete(dlvRequestMethods, dlvResp.ID) // Clean up
+				dlvRequestMutex.Unlock()
 
 				// Forward to browser
 				conn.WriteJSON(map[string]interface{}{
@@ -2004,7 +2007,9 @@ func handleDebugWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Track the method for this request ID
+		dlvRequestMutex.Lock()
 		dlvRequestMethods[dlvReq.ID] = dlvReq.Method
+		dlvRequestMutex.Unlock()
 
 		// Send to dlv
 		reqBytes, _ := json.Marshal(dlvReq)
