@@ -125,6 +125,10 @@ The included web UI provides an interactive environment for exploring code, gene
 
 ![Web UI Screenshot](docs/images/ui-screenshot.png?v=2)
 
+**UI Workflow Demo** - Generating hooks, compiling with instrumentation, and debugging the instrumented code:
+
+![UI Workflow Demo](docs/images/go-build-interceptor.gif)
+
 ### Setup
 
 ```bash
