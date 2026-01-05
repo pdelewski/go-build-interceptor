@@ -123,7 +123,7 @@ Or use the UI file selector to pick multiple files interactively.
 
 The included web UI provides an interactive environment for exploring code, generating hooks, and building.
 
-![Web UI Screenshot](docs/images/ui-screenshot.png)
+![Web UI Screenshot](docs/images/ui-screenshot.png?v=2)
 
 ### Setup
 
