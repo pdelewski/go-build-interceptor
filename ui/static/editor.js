@@ -4034,6 +4034,10 @@ function closeMessageWindow() {
 }
 
 // Run the built executable
+// Global variable to track running process WebSocket
+let runSocket = null;
+let runningProcessPid = null;
+
 async function runExecutable() {
     const execPath = prompt('Enter executable path (e.g., ./hello or hello):');
 
@@ -4041,40 +4045,144 @@ async function runExecutable() {
         return;
     }
 
+    // Close any existing connection
+    if (runSocket) {
+        runSocket.close();
+        runSocket = null;
+    }
+
     // Show terminal and clear previous output
     showTerminal();
     clearTerminal();
     addTerminalOutput('$ ' + execPath.trim(), 'terminal-command');
-    addTerminalOutput('Running...', 'terminal-info');
+    addTerminalOutput('Starting...', 'terminal-info');
+
+    // Show stop button
+    showStopButton(true);
 
     try {
-        const response = await fetch('/api/run-executable', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ executablePath: execPath.trim() })
-        });
+        // Connect via WebSocket for real-time output
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        runSocket = new WebSocket(`${wsProtocol}//${window.location.host}/ws/run`);
 
-        const data = await response.json();
+        runSocket.onopen = () => {
+            // Send start command
+            runSocket.send(JSON.stringify({
+                command: 'start',
+                executablePath: execPath.trim()
+            }));
+        };
 
-        if (data.error) {
+        runSocket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            switch (data.type) {
+                case 'started':
+                    runningProcessPid = data.pid;
+                    addTerminalOutput(`Process started (PID: ${data.pid})`, 'terminal-info');
+                    break;
+
+                case 'stdout':
+                    // Remove trailing newline since addTerminalOutput adds its own
+                    const stdoutLine = data.output.replace(/\n$/, '');
+                    addTerminalOutput(stdoutLine, '');
+                    break;
+
+                case 'stderr':
+                    const stderrLine = data.output.replace(/\n$/, '');
+                    addTerminalOutput(stderrLine, 'terminal-error');
+                    break;
+
+                case 'exited':
+                    runningProcessPid = null;
+                    showStopButton(false);
+                    addTerminalOutput('', '');
+                    if (data.exitCode === 0) {
+                        addTerminalOutput('✅ Process exited successfully', 'terminal-success');
+                    } else {
+                        addTerminalOutput(`⚠️ Process exited with code: ${data.exitCode}`, 'terminal-warning');
+                    }
+                    runSocket = null;
+                    break;
+
+                case 'stopped':
+                    runningProcessPid = null;
+                    showStopButton(false);
+                    addTerminalOutput('', '');
+                    addTerminalOutput('🛑 ' + data.message, 'terminal-info');
+                    runSocket = null;
+                    break;
+
+                case 'error':
+                    runningProcessPid = null;
+                    showStopButton(false);
+                    addTerminalOutput('', '');
+                    addTerminalOutput('❌ Error: ' + data.error, 'terminal-error');
+                    runSocket = null;
+                    break;
+            }
+        };
+
+        runSocket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            showStopButton(false);
             addTerminalOutput('', '');
-            addTerminalOutput('❌ Execution Failed:', 'terminal-error');
-            addTerminalOutput(data.error, 'terminal-error');
-        } else {
-            const output = data.content || 'No output';
-            addTerminalOutput('', '');
-            output.split('\n').forEach(line => {
-                addTerminalOutput(line, '');
-            });
-            addTerminalOutput('', '');
-            addTerminalOutput('✅ Execution completed', 'terminal-success');
-        }
+            addTerminalOutput('❌ Connection error', 'terminal-error');
+            runSocket = null;
+        };
+
+        runSocket.onclose = () => {
+            if (runningProcessPid) {
+                // Unexpected close
+                addTerminalOutput('', '');
+                addTerminalOutput('Connection closed', 'terminal-info');
+            }
+            showStopButton(false);
+            runSocket = null;
+            runningProcessPid = null;
+        };
+
     } catch (err) {
         console.error('Execution error:', err);
+        showStopButton(false);
         addTerminalOutput('', '');
         addTerminalOutput('❌ Error: ' + err.message, 'terminal-error');
+    }
+}
+
+// Stop the currently running process
+function stopRunningProcess() {
+    if (runSocket && runSocket.readyState === WebSocket.OPEN) {
+        runSocket.send(JSON.stringify({ command: 'stop' }));
+    }
+}
+
+// Show/hide stop button in terminal header
+function showStopButton(show) {
+    const terminalActions = document.querySelector('.terminal-actions');
+    if (!terminalActions) return;
+
+    // Remove existing stop button if any
+    const existingBtn = document.getElementById('stopProcessBtn');
+    if (existingBtn) {
+        existingBtn.remove();
+    }
+
+    if (show) {
+        // Add stop button
+        const stopBtn = document.createElement('button');
+        stopBtn.id = 'stopProcessBtn';
+        stopBtn.className = 'terminal-action stop-process-btn';
+        stopBtn.title = 'Stop Process';
+        stopBtn.onclick = stopRunningProcess;
+        stopBtn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 16 16">
+                <rect x="3" y="3" width="10" height="10" fill="currentColor"/>
+            </svg>
+            <span style="margin-left: 4px; color: #f44336;">Stop</span>
+        `;
+        // Insert at the beginning
+        terminalActions.insertBefore(stopBtn, terminalActions.firstChild);
     }
 }
 

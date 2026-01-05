@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -287,6 +288,12 @@ func main() {
 
 	// Debug WebSocket endpoint
 	http.HandleFunc("/ws/debug", handleDebugWebSocket)
+
+	// Run executable WebSocket endpoint (for real-time output)
+	http.HandleFunc("/ws/run", handleRunWebSocket)
+
+	// Stop process endpoint
+	http.HandleFunc("/api/stop-process", handleStopProcess)
 
 	fmt.Printf("🚀 Web Text Editor Server Starting...\n")
 	fmt.Printf("📝 Access the editor at: http://localhost:%s\n", *port)
@@ -1341,6 +1348,7 @@ func getRunExecutable(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		ExecutablePath string `json:"executablePath"`
+		Timeout        int    `json:"timeout"` // Timeout in seconds (default 10)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendErrorResponse(w, "Invalid request format")
@@ -1352,6 +1360,12 @@ func getRunExecutable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Default timeout of 10 seconds
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+
 	// Resolve the executable path relative to rootDirectory
 	execPath := req.ExecutablePath
 	if !filepath.IsAbs(execPath) {
@@ -1359,7 +1373,7 @@ func getRunExecutable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log the operation
-	fmt.Printf("🚀 Running executable: %s\n", execPath)
+	fmt.Printf("🚀 Running executable: %s (timeout: %ds)\n", execPath, timeout)
 
 	// Check if executable exists
 	if _, err := os.Stat(execPath); os.IsNotExist(err) {
@@ -1367,33 +1381,74 @@ func getRunExecutable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Execute the built program
+	// Execute the built program with a timeout context
 	fmt.Printf("📍 Executing: %s from directory: %s\n", execPath, rootDirectory)
-	cmd := exec.Command(execPath)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, execPath)
 	cmd.Dir = rootDirectory
 
-	// Capture both stdout and stderr
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Include output even on error (might have partial output)
-		errorMsg := fmt.Sprintf("Execution finished with error: %v\n\nOutput:\n%s", err, string(output))
+	// Use CombinedOutput in a goroutine to capture all output
+	type result struct {
+		output []byte
+		err    error
+	}
+	done := make(chan result, 1)
+
+	go func() {
+		out, err := cmd.CombinedOutput()
+		done <- result{output: out, err: err}
+	}()
+
+	// Wait for completion or timeout
+	select {
+	case res := <-done:
+		output := string(res.output)
+		if output == "" {
+			output = "(no output)"
+		}
+		if res.err != nil {
+			// Check if it was killed due to timeout
+			if ctx.Err() == context.DeadlineExceeded {
+				output = fmt.Sprintf("%s\n\n[Process killed after %d seconds timeout]", output, timeout)
+			} else {
+				output = fmt.Sprintf("%s\n\nProcess exited with: %v", output, res.err)
+			}
+		}
 		response := FileResponse{
-			Success: true, // Still return success to show output
-			Content: errorMsg,
+			Success: true,
+			Content: output,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
-		return
-	}
 
-	// Return the command output
-	response := FileResponse{
-		Success: true,
-		Content: string(output),
+	case <-ctx.Done():
+		// Timeout occurred - the CommandContext will kill the process
+		// Wait briefly for the goroutine to finish and collect any output
+		select {
+		case res := <-done:
+			output := string(res.output)
+			if output == "" {
+				output = "(no output captured)"
+			}
+			output = fmt.Sprintf("%s\n\n[Process killed after %d seconds timeout]", output, timeout)
+			response := FileResponse{
+				Success: true,
+				Content: output,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		case <-time.After(1 * time.Second):
+			// Process didn't respond to kill, return what we have
+			response := FileResponse{
+				Success: true,
+				Content: fmt.Sprintf("[Process killed after %d seconds timeout - no output captured]", timeout),
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+		}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
 }
 
 // SourceMapping represents a mapping from original source file to instrumented file
@@ -1414,6 +1469,12 @@ type SourceMappings struct {
 var (
 	dlvCmd   *exec.Cmd
 	dlvMutex sync.Mutex
+)
+
+// Global running executable process management
+var (
+	runningCmd   *exec.Cmd
+	runningMutex sync.Mutex
 )
 
 func handleDebug(w http.ResponseWriter, r *http.Request) {
@@ -2015,5 +2076,283 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 		"message":     message,
 		"deletedDirs": deletedDirs,
 		"errors":      errors,
+	})
+}
+
+// handleRunWebSocket handles WebSocket connections for running executables with real-time output
+func handleRunWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Run WebSocket upgrade failed: %v\n", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Println("Run WebSocket connection established")
+
+	// Read the initial command to start the process
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		log.Printf("Error reading initial message: %v\n", err)
+		return
+	}
+
+	var req struct {
+		Command        string `json:"command"`
+		ExecutablePath string `json:"executablePath"`
+	}
+	if err := json.Unmarshal(message, &req); err != nil {
+		conn.WriteJSON(map[string]interface{}{
+			"type":  "error",
+			"error": "Invalid request format",
+		})
+		return
+	}
+
+	if req.Command != "start" || req.ExecutablePath == "" {
+		conn.WriteJSON(map[string]interface{}{
+			"type":  "error",
+			"error": "Invalid command or missing executable path",
+		})
+		return
+	}
+
+	// Resolve the executable path relative to rootDirectory
+	execPath := req.ExecutablePath
+	if !filepath.IsAbs(execPath) {
+		execPath = filepath.Join(rootDirectory, execPath)
+	}
+
+	// Check if executable exists
+	if _, err := os.Stat(execPath); os.IsNotExist(err) {
+		conn.WriteJSON(map[string]interface{}{
+			"type":  "error",
+			"error": fmt.Sprintf("Executable not found: %s", execPath),
+		})
+		return
+	}
+
+	// Kill any existing running process
+	runningMutex.Lock()
+	if runningCmd != nil && runningCmd.Process != nil {
+		log.Printf("Killing existing process (PID: %d)\n", runningCmd.Process.Pid)
+		runningCmd.Process.Kill()
+		runningCmd.Wait()
+		runningCmd = nil
+	}
+	runningMutex.Unlock()
+
+	// Create the command
+	cmd := exec.Command(execPath)
+	cmd.Dir = rootDirectory
+
+	// Create pipes for stdout and stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		conn.WriteJSON(map[string]interface{}{
+			"type":  "error",
+			"error": fmt.Sprintf("Failed to create stdout pipe: %v", err),
+		})
+		return
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		conn.WriteJSON(map[string]interface{}{
+			"type":  "error",
+			"error": fmt.Sprintf("Failed to create stderr pipe: %v", err),
+		})
+		return
+	}
+
+	// Start the process
+	if err := cmd.Start(); err != nil {
+		conn.WriteJSON(map[string]interface{}{
+			"type":  "error",
+			"error": fmt.Sprintf("Failed to start process: %v", err),
+		})
+		return
+	}
+
+	// Store the running command
+	runningMutex.Lock()
+	runningCmd = cmd
+	runningMutex.Unlock()
+
+	log.Printf("Started process: %s (PID: %d)\n", execPath, cmd.Process.Pid)
+
+	// Send started message
+	conn.WriteJSON(map[string]interface{}{
+		"type": "started",
+		"pid":  cmd.Process.Pid,
+	})
+
+	// Channels for coordination
+	done := make(chan struct{})
+	processExited := make(chan error, 1)
+	clientCommand := make(chan string, 1)
+	clientDisconnected := make(chan struct{})
+
+	// Mutex for safe WebSocket writes from multiple goroutines
+	var connMutex sync.Mutex
+	safeWriteJSON := func(v interface{}) error {
+		connMutex.Lock()
+		defer connMutex.Unlock()
+		return conn.WriteJSON(v)
+	}
+
+	// Goroutine to read stdout and send to WebSocket
+	go func() {
+		reader := bufio.NewReader(stdout)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			select {
+			case <-done:
+				return
+			default:
+				safeWriteJSON(map[string]interface{}{
+					"type":   "stdout",
+					"output": line,
+				})
+			}
+		}
+	}()
+
+	// Goroutine to read stderr and send to WebSocket
+	go func() {
+		reader := bufio.NewReader(stderr)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			select {
+			case <-done:
+				return
+			default:
+				safeWriteJSON(map[string]interface{}{
+					"type":   "stderr",
+					"output": line,
+				})
+			}
+		}
+	}()
+
+	// Goroutine to wait for process to exit
+	go func() {
+		err := cmd.Wait()
+		processExited <- err
+	}()
+
+	// Goroutine to read commands from WebSocket (blocking read in separate goroutine)
+	go func() {
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				// Client disconnected or error
+				close(clientDisconnected)
+				return
+			}
+
+			var req struct {
+				Command string `json:"command"`
+			}
+			if err := json.Unmarshal(message, &req); err == nil {
+				select {
+				case clientCommand <- req.Command:
+				case <-done:
+					return
+				}
+			}
+		}
+	}()
+
+	// Main event loop - wait for process exit, stop command, or client disconnect
+	select {
+	case err := <-processExited:
+		close(done)
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			}
+		}
+		safeWriteJSON(map[string]interface{}{
+			"type":     "exited",
+			"exitCode": exitCode,
+		})
+		log.Printf("Process exited with code: %d\n", exitCode)
+
+		runningMutex.Lock()
+		runningCmd = nil
+		runningMutex.Unlock()
+
+	case cmd := <-clientCommand:
+		if cmd == "stop" {
+			log.Println("Received stop command")
+			close(done)
+			if runningCmd != nil && runningCmd.Process != nil {
+				runningCmd.Process.Kill()
+			}
+			safeWriteJSON(map[string]interface{}{
+				"type":    "stopped",
+				"message": "Process killed by user",
+			})
+			runningMutex.Lock()
+			runningCmd = nil
+			runningMutex.Unlock()
+		}
+
+	case <-clientDisconnected:
+		log.Println("Client disconnected, killing process")
+		close(done)
+		if runningCmd != nil && runningCmd.Process != nil {
+			runningCmd.Process.Kill()
+		}
+		runningMutex.Lock()
+		runningCmd = nil
+		runningMutex.Unlock()
+	}
+}
+
+// handleStopProcess stops the currently running process
+func handleStopProcess(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	runningMutex.Lock()
+	defer runningMutex.Unlock()
+
+	if runningCmd == nil || runningCmd.Process == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": "No process is currently running",
+		})
+		return
+	}
+
+	pid := runningCmd.Process.Pid
+	if err := runningCmd.Process.Kill(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"message": fmt.Sprintf("Failed to kill process: %v", err),
+		})
+		return
+	}
+
+	runningCmd = nil
+	log.Printf("Killed process (PID: %d)\n", pid)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Process %d killed", pid),
 	})
 }
