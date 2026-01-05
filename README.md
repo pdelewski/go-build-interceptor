@@ -194,4 +194,4 @@ Open http://localhost:9090 in your browser.
 
 ## License
 
-MIT License
+Apache License 2.0
