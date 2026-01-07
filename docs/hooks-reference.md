@@ -1,6 +1,6 @@
 # Hooks Reference
 
-This document provides a comprehensive reference for all hook types available in go-build-interceptor.
+This document provides a comprehensive reference for all hook types available in hc (hook compiler).
 
 ## Table of Contents
 

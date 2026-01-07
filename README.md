@@ -6,7 +6,7 @@ A Go build instrumentation tool that injects hooks into functions without modify
 
 ```bash
 git clone https://github.com/pdelewski/go-build-interceptor
-cd go-build-interceptor
+cd go-build-interceptor/hc
 go build
 ```
 
@@ -54,9 +54,9 @@ func AfterMyFunction(ctx hooks.HookContext) {
 ### 2. Compile with hooks
 
 ```bash
-./go-build-interceptor --compile path/to/myhooks.go
+./hc --compile path/to/myhooks.go
 # or short form
-./go-build-interceptor -c path/to/myhooks.go
+./hc -c path/to/myhooks.go
 ```
 
 This builds your project with the hooks automatically injected.
@@ -74,7 +74,7 @@ The project includes ready-to-use instrumentation examples:
 cd examples/hello
 
 # Compile with tracing hooks
-../../go-build-interceptor -c ../../instrumentations/hello/generated_hooks.go
+../../hc/hc -c ../../instrumentations/hello/generated_hooks.go
 
 # Run the instrumented binary
 ./hello
@@ -103,10 +103,10 @@ This example shows three hook capabilities:
 
 ```bash
 # Compile with runtime GLS hooks only
-./go-build-interceptor -c ./instrumentations/runtime/runtime_hooks.go
+./hc/hc -c ./instrumentations/runtime/runtime_hooks.go
 
 # Compile with both runtime and application hooks (recommended for full tracing)
-./go-build-interceptor -c ./instrumentations/runtime/runtime_hooks.go,./instrumentations/hello/generated_hooks.go
+./hc/hc -c ./instrumentations/runtime/runtime_hooks.go,./instrumentations/hello/generated_hooks.go
 ```
 
 #### Using Multiple Hooks Files
@@ -114,7 +114,7 @@ This example shows three hook capabilities:
 You can compile with multiple hooks files by specifying them comma-separated:
 
 ```bash
-./go-build-interceptor -c hooks1.go,hooks2.go,hooks3.go
+./hc/hc -c hooks1.go,hooks2.go,hooks3.go
 ```
 
 Or use the UI file selector to pick multiple files interactively.

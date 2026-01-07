@@ -24,9 +24,9 @@ These switches make it possible to treat the build process itself as an extensib
 
 # go-build-interceptor
 
-## Hook Compiler — practical scenario
+## Hook Compiler (hc) — practical scenario
 
-go-build-interceptor is a tool composed of two components: the compiler and the UI.
+go-build-interceptor is a tool composed of two components: the hook compiler (hc) and the UI.
 The compiler component injects additional aspects into the user's source code during the Go compilation process. The injection rules are expressed in plain Go in the form of a small internal DSL, which the tool parses from the file provided as an argument.
 
 ### Example project
@@ -102,10 +102,10 @@ func AfterFoo(ctx hooks.HookContext) {
 }
 ```
 
-When such rules are ready, the interceptor compiler can be executed using the main switch --compile (or -c for short):
+When such rules are ready, the hook compiler can be executed using the main switch --compile (or -c for short):
 
 ```bash
-go-build-interceptor -c ../../instrumentations/hello/generated_hooks.go
+hc -c ../../instrumentations/hello/generated_hooks.go
 ```
 
 The tool parses the DSL code, generates trampoline functions inside the WORK directory, and augments the build plan so that the final program receives the declared aspects. The original code base remains untouched and focused solely on business logic.
