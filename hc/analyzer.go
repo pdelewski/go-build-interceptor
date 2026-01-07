@@ -1,0 +1,954 @@
+package main
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"strings"
+
+	"golang.org/x/tools/go/packages"
+)
+
+// ParameterInfo holds information about a function parameter
+type ParameterInfo struct {
+	Name string
+	Type string
+}
+
+// FunctionInfo holds information about a function or method
+type FunctionInfo struct {
+	Name       string
+	Receiver   string // Empty for functions, type name for methods
+	Parameters []ParameterInfo
+	Returns    []string // Return types
+	IsExported bool
+	FilePath   string // Path to the file containing this function
+}
+
+// FunctionCall represents a function call
+type FunctionCall struct {
+	CallerFile     string // File containing the caller
+	CallerFunction string // Function making the call
+	CalledFunction string // Function being called
+	Package        string // Package of the called function (if qualified)
+	Line           int    // Line number of the call
+}
+
+// CallGraph represents the complete call graph
+type CallGraph struct {
+	Functions map[string]*FunctionInfo // Map of function signatures to FunctionInfo
+	Calls     []FunctionCall           // List of function calls
+}
+
+// extractFunctionsFromGoFile uses AST parsing to extract function and method names from a Go file
+func extractFunctionsFromGoFile(filePath string) ([]FunctionInfo, error) {
+	// Parse the Go source file
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
+	}
+
+	var functions []FunctionInfo
+
+	// Walk through the AST to find function and method declarations
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			info := FunctionInfo{
+				Name:       x.Name.Name,
+				IsExported: ast.IsExported(x.Name.Name),
+				FilePath:   filePath,
+			}
+
+			// Check if it's a method (has receiver)
+			if x.Recv != nil && len(x.Recv.List) > 0 {
+				// Extract receiver type
+				if recvType := extractReceiverType(x.Recv.List[0].Type); recvType != "" {
+					info.Receiver = recvType
+				}
+			}
+
+			// Extract parameters
+			if x.Type.Params != nil {
+				info.Parameters = extractParameters(x.Type.Params)
+			}
+
+			// Extract return types
+			if x.Type.Results != nil {
+				info.Returns = extractReturnTypes(x.Type.Results)
+			}
+
+			functions = append(functions, info)
+		}
+		return true
+	})
+
+	return functions, nil
+}
+
+// extractReceiverType extracts the receiver type name from an AST expression
+func extractReceiverType(expr ast.Expr) string {
+	return extractTypeString(expr)
+}
+
+// extractParameters extracts parameter information from a field list
+func extractParameters(params *ast.FieldList) []ParameterInfo {
+	var result []ParameterInfo
+
+	for _, field := range params.List {
+		typeStr := extractTypeString(field.Type)
+
+		if len(field.Names) == 0 {
+			// Unnamed parameter
+			result = append(result, ParameterInfo{
+				Name: "",
+				Type: typeStr,
+			})
+		} else {
+			// Named parameters
+			for _, name := range field.Names {
+				result = append(result, ParameterInfo{
+					Name: name.Name,
+					Type: typeStr,
+				})
+			}
+		}
+	}
+
+	return result
+}
+
+// extractReturnTypes extracts return type strings from a field list
+func extractReturnTypes(results *ast.FieldList) []string {
+	var types []string
+
+	for _, field := range results.List {
+		typeStr := extractTypeString(field.Type)
+
+		// Handle multiple return values of same type
+		if len(field.Names) == 0 {
+			types = append(types, typeStr)
+		} else {
+			for range field.Names {
+				types = append(types, typeStr)
+			}
+		}
+	}
+
+	return types
+}
+
+// extractTypeString converts an AST expression to a type string
+func extractTypeString(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		// Pointer type
+		return "*" + extractTypeString(t.X)
+	case *ast.ArrayType:
+		// Array or slice
+		if t.Len == nil {
+			return "[]" + extractTypeString(t.Elt)
+		}
+		return "[...]" + extractTypeString(t.Elt)
+	case *ast.MapType:
+		// Map type
+		return "map[" + extractTypeString(t.Key) + "]" + extractTypeString(t.Value)
+	case *ast.InterfaceType:
+		// Interface type
+		if t.Methods == nil || len(t.Methods.List) == 0 {
+			return "interface{}"
+		}
+		return "interface{...}"
+	case *ast.FuncType:
+		// Function type
+		return "func(...)"
+	case *ast.ChanType:
+		// Channel type
+		switch t.Dir {
+		case ast.SEND:
+			return "chan<- " + extractTypeString(t.Value)
+		case ast.RECV:
+			return "<-chan " + extractTypeString(t.Value)
+		default:
+			return "chan " + extractTypeString(t.Value)
+		}
+	case *ast.SelectorExpr:
+		// Qualified identifier (e.g., pkg.Type)
+		if x, ok := t.X.(*ast.Ident); ok {
+			return x.Name + "." + t.Sel.Name
+		}
+	case *ast.Ellipsis:
+		// Variadic parameter
+		return "..." + extractTypeString(t.Elt)
+	}
+	return "<unknown>"
+}
+
+// FormatFunctionSignature formats a FunctionInfo into a readable signature string
+func FormatFunctionSignature(fn FunctionInfo) string {
+	var sig strings.Builder
+
+	if fn.Receiver != "" {
+		sig.WriteString(fmt.Sprintf("(%s) ", fn.Receiver))
+	}
+	sig.WriteString(fn.Name)
+	sig.WriteString("(")
+
+	// Add parameters
+	for i, param := range fn.Parameters {
+		if i > 0 {
+			sig.WriteString(", ")
+		}
+		if param.Name != "" {
+			sig.WriteString(param.Name + " ")
+		}
+		sig.WriteString(param.Type)
+	}
+	sig.WriteString(")")
+
+	// Add return types
+	if len(fn.Returns) > 0 {
+		if len(fn.Returns) == 1 {
+			sig.WriteString(" " + fn.Returns[0])
+		} else {
+			sig.WriteString(" (")
+			sig.WriteString(strings.Join(fn.Returns, ", "))
+			sig.WriteString(")")
+		}
+	}
+
+	return sig.String()
+}
+
+// extractFunctionCallsFromGoFile extracts function calls from a Go file
+func extractFunctionCallsFromGoFile(filePath string) ([]FunctionCall, error) {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse file %s: %w", filePath, err)
+	}
+
+	var calls []FunctionCall
+	var currentFunction string
+
+	// Walk through the AST to find function calls
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			// Track which function we're currently in
+			if x.Name != nil {
+				currentFunction = x.Name.Name
+				if x.Recv != nil && len(x.Recv.List) > 0 {
+					// For methods, include receiver type
+					recvType := extractReceiverType(x.Recv.List[0].Type)
+					currentFunction = fmt.Sprintf("(%s) %s", recvType, x.Name.Name)
+				}
+			}
+		case *ast.CallExpr:
+			// Extract function call information
+			if currentFunction != "" {
+				call := extractCallInfo(fset, x, filePath, currentFunction)
+				if call.CalledFunction != "" {
+					calls = append(calls, call)
+				}
+			}
+		}
+		return true
+	})
+
+	return calls, nil
+}
+
+// extractCallInfo extracts call information from a CallExpr
+func extractCallInfo(fset *token.FileSet, call *ast.CallExpr, filePath, currentFunction string) FunctionCall {
+	fc := FunctionCall{
+		CallerFile:     filePath,
+		CallerFunction: currentFunction,
+		Line:           fset.Position(call.Pos()).Line,
+	}
+
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		// Simple function call: funcName()
+		fc.CalledFunction = fun.Name
+	case *ast.SelectorExpr:
+		// Qualified call: pkg.FuncName() or obj.Method()
+		if x, ok := fun.X.(*ast.Ident); ok {
+			// Check if this looks like a method call on a local variable
+			// (starts with lowercase letter) vs a package call (uppercase or known packages)
+			if isLikelyMethodCall(x.Name) {
+				// Treat as local method call - we'll need to resolve the receiver type later
+				// For now, store the method name and mark as local call
+				fc.CalledFunction = fun.Sel.Name
+				fc.Package = "" // Mark as local call
+			} else {
+				// Treat as package call
+				fc.Package = x.Name
+				fc.CalledFunction = fun.Sel.Name
+			}
+		}
+	}
+
+	return fc
+}
+
+// isLikelyMethodCall determines if a selector is likely a method call vs a package call
+func isLikelyMethodCall(identifier string) bool {
+	// Variables typically start with lowercase letters
+	// Package names are usually lowercase but some standard packages start with uppercase
+	// We'll use a heuristic: if it starts with lowercase, it's likely a variable/method call
+	if len(identifier) == 0 {
+		return false
+	}
+
+	// Known standard library packages that might be confused
+	knownPackages := map[string]bool{
+		"fmt": true, "os": true, "log": true, "flag": true, "strings": true,
+		"strconv": true, "time": true, "json": true, "http": true, "io": true,
+		"ioutil": true, "filepath": true, "path": true, "net": true, "url": true,
+		"context": true, "sync": true, "errors": true, "sort": true, "math": true,
+		"rand": true, "crypto": true, "encoding": true, "reflect": true, "unsafe": true,
+		"runtime": true, "debug": true, "testing": true, "bytes": true, "bufio": true,
+		"regexp": true, "template": true, "html": true, "xml": true, "csv": true,
+		"compress": true, "archive": true, "database": true, "image": true,
+		"unicode": true, "utf8": true, "utf16": true, "mime": true, "base64": true,
+		"base32": true, "hex": true, "pem": true, "ascii85": true, "binary": true,
+		"gob": true, "tar": true, "zip": true, "gzip": true, "zlib": true, "bzip2": true,
+		"lzw": true, "flate": true, "sql": true, "driver": true, "color": true, "draw": true,
+		"gif": true, "jpeg": true, "png": true, "token": true, "scanner": true, "parser": true,
+		"ast": true, "doc": true, "format": true, "build": true, "constant": true, "importer": true,
+		"types": true, "gc": true, "prof": true, "pprof": true, "trace": true, "elf": true,
+		"macho": true, "pe": true, "plan9obj": true, "dwarf": true, "gosym": true,
+	}
+
+	// If it's a known package, treat as package call
+	if knownPackages[identifier] {
+		return false
+	}
+
+	// If starts with lowercase letter, likely a variable (method call)
+	firstChar := identifier[0]
+	return firstChar >= 'a' && firstChar <= 'z'
+}
+
+// BuildCallGraph builds a complete call graph from Go files
+func BuildCallGraph(files []string) (*CallGraph, error) {
+	return BuildCallGraphWithPackageFilter(files, nil)
+}
+
+// BuildCallGraphWithPackageFilter builds a call graph from Go files with package filtering
+func BuildCallGraphWithPackageFilter(files []string, packageInfo *PackageInfo) (*CallGraph, error) {
+	cg := &CallGraph{
+		Functions: make(map[string]*FunctionInfo),
+		Calls:     []FunctionCall{},
+	}
+
+	// First pass: extract all function declarations (only from current module files)
+	for _, file := range files {
+		if !strings.HasSuffix(file, ".go") {
+			continue
+		}
+
+		// Skip files not in current module if package filtering is enabled
+		if packageInfo != nil && !isCurrentModuleFile(file, packageInfo) {
+			continue
+		}
+
+		functions, err := extractFunctionsFromGoFile(file)
+		if err != nil {
+			fmt.Printf("Warning: Error parsing functions in %s: %v\n", file, err)
+			continue
+		}
+
+		for i := range functions {
+			fn := &functions[i]
+			key := FormatFunctionSignature(*fn)
+			cg.Functions[key] = fn
+		}
+	}
+
+	// Second pass: extract all function calls (only from current module files)
+	for _, file := range files {
+		if !strings.HasSuffix(file, ".go") {
+			continue
+		}
+
+		// Skip files not in current module if package filtering is enabled
+		if packageInfo != nil && !isCurrentModuleFile(file, packageInfo) {
+			continue
+		}
+
+		calls, err := extractFunctionCallsFromGoFile(file)
+		if err != nil {
+			fmt.Printf("Warning: Error parsing calls in %s: %v\n", file, err)
+			continue
+		}
+
+		cg.Calls = append(cg.Calls, calls...)
+	}
+
+	return cg, nil
+}
+
+// PackageInfo holds information about packages and their module affiliations
+type PackageInfo struct {
+	CurrentModulePackages map[string]bool // Packages that belong to the current module
+	ModulePath            string          // The module path (e.g., "go-build-interceptor")
+}
+
+// getPackageInfo uses packages.Load to determine which packages belong to the current module
+func getPackageInfo(workingDir string) (*PackageInfo, error) {
+	// Load packages using packages.Load
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedModule,
+		Dir:  workingDir,
+	}
+
+	// Load the current directory package and all its dependencies
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load packages: %w", err)
+	}
+
+	info := &PackageInfo{
+		CurrentModulePackages: make(map[string]bool),
+	}
+
+	// Find the main module path
+	for _, pkg := range pkgs {
+		if pkg.Module != nil && pkg.Module.Main {
+			info.ModulePath = pkg.Module.Path
+			break
+		}
+	}
+
+	// Identify packages that belong to the current module
+	for _, pkg := range pkgs {
+		if pkg.Module != nil && pkg.Module.Main {
+			info.CurrentModulePackages[pkg.PkgPath] = true
+		}
+	}
+
+	return info, nil
+}
+
+// isCurrentModuleFile checks if a file path belongs to the current module
+func isCurrentModuleFile(filePath string, packageInfo *PackageInfo) bool {
+	// Convert absolute path to relative to determine package
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return false
+	}
+
+	// For files in the current directory or subdirectories, consider them part of current module
+	// This is a simple heuristic - in practice you might want more sophisticated logic
+	wd, err := filepath.Abs(".")
+	if err != nil {
+		return false
+	}
+
+	rel, err := filepath.Rel(wd, absPath)
+	if err != nil {
+		return false
+	}
+
+	// If the relative path doesn't start with "..", it's in our module
+	return !strings.HasPrefix(rel, "..")
+}
+
+// buildCallChainFromMain builds a map of functions reachable from main functions
+func buildCallChainFromMain(cg *CallGraph, callGraph map[string][]FunctionCall) map[string]bool {
+	reachableFromMain := make(map[string]bool)
+	visited := make(map[string]bool) // Separate visited tracker for DFS
+
+	// Build a method name to full signature mapping for method resolution
+	methodSignatures := make(map[string][]string)
+
+	for funcSig := range callGraph {
+		// Extract method name from signature like "(*Processor) Run("
+		if strings.Contains(funcSig, ") ") {
+			parts := strings.Split(funcSig, ") ")
+			if len(parts) >= 2 {
+				methodName := strings.Split(parts[1], "(")[0]
+				methodSignatures[methodName] = append(methodSignatures[methodName], funcSig)
+			}
+		}
+	}
+
+	// Find all main functions
+	mainFunctions := []string{}
+	for funcName := range callGraph {
+		if strings.Contains(funcName, "main") {
+			mainFunctions = append(mainFunctions, funcName)
+		}
+	}
+
+	// If no main functions found, use entry points (functions not called by others)
+	if len(mainFunctions) == 0 {
+		calledFunctions := make(map[string]bool)
+		for _, call := range cg.Calls {
+			if call.Package == "" { // Only consider local functions
+				calledFunctions[call.CalledFunction] = true
+			}
+		}
+
+		for funcName := range callGraph {
+			if !calledFunctions[funcName] {
+				mainFunctions = append(mainFunctions, funcName)
+			}
+		}
+	}
+
+	// DFS to find all functions reachable from main functions
+	var dfs func(string)
+	dfs = func(funcName string) {
+		if visited[funcName] {
+			return
+		}
+		visited[funcName] = true
+		reachableFromMain[funcName] = true
+
+		// Follow all calls from this function
+		calls := callGraph[funcName]
+		for _, call := range calls {
+			// For external calls, mark the call as reachable but don't traverse further
+			callee := call.CalledFunction
+			if call.Package != "" {
+				callee = call.Package + "." + callee
+			}
+			reachableFromMain[callee] = true
+
+			// For local calls, continue DFS
+			if call.Package == "" {
+				// First try direct function call
+				dfs(call.CalledFunction)
+
+				// Also try to find method implementations with this name
+				if methodSigs, exists := methodSignatures[call.CalledFunction]; exists {
+					for _, methodSig := range methodSigs {
+						dfs(methodSig)
+					}
+				}
+			}
+		}
+	}
+
+	for _, mainFunc := range mainFunctions {
+		dfs(mainFunc)
+	}
+
+	return reachableFromMain
+}
+
+// FormatCallGraph formats the call graph for display starting only from main functions
+func FormatCallGraph(cg *CallGraph) string {
+	var output strings.Builder
+
+	output.WriteString("=== CALL GRAPH (from main) ===\n\n")
+
+	// Build adjacency list for call relationships
+	callGraph := make(map[string][]FunctionCall)
+	callLineMap := make(map[string]map[string]int) // caller -> callee -> line number (first occurrence)
+
+	for _, call := range cg.Calls {
+		caller := call.CallerFunction
+		callGraph[caller] = append(callGraph[caller], call)
+
+		// Store line number for first occurrence
+		if _, exists := callLineMap[caller]; !exists {
+			callLineMap[caller] = make(map[string]int)
+		}
+		callee := call.CalledFunction
+		if call.Package != "" {
+			callee = call.Package + "." + callee
+		}
+		if _, exists := callLineMap[caller][callee]; !exists {
+			callLineMap[caller][callee] = call.Line
+		}
+	}
+
+	// Find functions reachable from main
+	reachableFromMain := buildCallChainFromMain(cg, callGraph)
+
+	// Find main entry points
+	mainEntryPoints := []string{}
+	for funcName := range callGraph {
+		if strings.Contains(funcName, "main") && reachableFromMain[funcName] {
+			mainEntryPoints = append(mainEntryPoints, funcName)
+		}
+	}
+
+	// If no main functions found, find actual entry points
+	if len(mainEntryPoints) == 0 {
+		calledFunctions := make(map[string]bool)
+		for _, call := range cg.Calls {
+			if call.Package == "" { // Only consider local functions
+				calledFunctions[call.CalledFunction] = true
+			}
+		}
+
+		for funcName := range callGraph {
+			if !calledFunctions[funcName] {
+				mainEntryPoints = append(mainEntryPoints, funcName)
+			}
+		}
+	}
+
+	// Generate call chains for each main entry point
+	processedFunctions := make(map[string]bool)
+
+	for _, entry := range mainEntryPoints {
+		if processedFunctions[entry] {
+			continue
+		}
+
+		output.WriteString(fmt.Sprintf("%s:\n", entry))
+		visited := make(map[string]bool)
+		generateCallChainsFromMain(entry, callGraph, callLineMap, "", visited, &output, processedFunctions, reachableFromMain, 1)
+		output.WriteString("\n")
+	}
+
+	// Count functions and calls reachable from main
+	reachableFunctions := 0
+	reachableCalls := 0
+	for funcName := range callGraph {
+		if reachableFromMain[funcName] {
+			reachableFunctions++
+			reachableCalls += len(callGraph[funcName])
+		}
+	}
+
+	output.WriteString(fmt.Sprintf("Summary: %d functions reachable from main, %d calls\n", reachableFunctions, reachableCalls))
+
+	return output.String()
+}
+
+// FormatCallGraphWithFilter formats the call graph with package filtering information
+func FormatCallGraphWithFilter(cg *CallGraph, packageInfo *PackageInfo) string {
+	var output strings.Builder
+
+	if packageInfo != nil {
+		output.WriteString(fmt.Sprintf("=== CALL GRAPH (from main - %s module only) ===\n\n", packageInfo.ModulePath))
+	} else {
+		output.WriteString("=== CALL GRAPH (from main) ===\n\n")
+	}
+
+	// Build adjacency list for call relationships
+	callGraph := make(map[string][]FunctionCall)
+	callLineMap := make(map[string]map[string]int) // caller -> callee -> line number (first occurrence)
+
+	for _, call := range cg.Calls {
+		caller := call.CallerFunction
+		callGraph[caller] = append(callGraph[caller], call)
+
+		// Store line number for first occurrence
+		if _, exists := callLineMap[caller]; !exists {
+			callLineMap[caller] = make(map[string]int)
+		}
+		callee := call.CalledFunction
+		if call.Package != "" {
+			callee = call.Package + "." + callee
+		}
+		if _, exists := callLineMap[caller][callee]; !exists {
+			callLineMap[caller][callee] = call.Line
+		}
+	}
+
+	// Find functions reachable from main
+	reachableFromMain := buildCallChainFromMain(cg, callGraph)
+
+	// Find main entry points
+	mainEntryPoints := []string{}
+	for funcName := range callGraph {
+		if strings.Contains(funcName, "main") && reachableFromMain[funcName] {
+			mainEntryPoints = append(mainEntryPoints, funcName)
+		}
+	}
+
+	// If no main functions found, find actual entry points
+	if len(mainEntryPoints) == 0 {
+		calledFunctions := make(map[string]bool)
+		for _, call := range cg.Calls {
+			if call.Package == "" { // Only consider local functions
+				calledFunctions[call.CalledFunction] = true
+			}
+		}
+
+		for funcName := range callGraph {
+			if !calledFunctions[funcName] {
+				mainEntryPoints = append(mainEntryPoints, funcName)
+			}
+		}
+	}
+
+	// Generate call chains for each main entry point
+	processedFunctions := make(map[string]bool)
+
+	for _, entry := range mainEntryPoints {
+		if processedFunctions[entry] {
+			continue
+		}
+
+		output.WriteString(fmt.Sprintf("%s:\n", entry))
+		visited := make(map[string]bool)
+		generateCallChainsFromMain(entry, callGraph, callLineMap, "", visited, &output, processedFunctions, reachableFromMain, 1)
+		output.WriteString("\n")
+	}
+
+	// Count functions and calls reachable from main
+	reachableFunctions := 0
+	reachableCalls := 0
+	for funcName := range callGraph {
+		if reachableFromMain[funcName] {
+			reachableFunctions++
+			reachableCalls += len(callGraph[funcName])
+		}
+	}
+
+	if packageInfo != nil {
+		output.WriteString(fmt.Sprintf("Summary: %d functions reachable from main in %s module, %d calls\n",
+			reachableFunctions, packageInfo.ModulePath, reachableCalls))
+	} else {
+		output.WriteString(fmt.Sprintf("Summary: %d functions reachable from main, %d calls\n",
+			reachableFunctions, reachableCalls))
+	}
+
+	return output.String()
+}
+
+// generateCallChains recursively generates call chains with proper indentation
+func generateCallChains(currentFunc string, callGraph map[string][]FunctionCall,
+	callLineMap map[string]map[string]int, indent string, visited map[string]bool,
+	output *strings.Builder, processedFunctions map[string]bool, depth int) {
+
+	if depth > 10 || visited[currentFunc] { // Prevent infinite recursion and limit depth
+		return
+	}
+
+	visited[currentFunc] = true
+	processedFunctions[currentFunc] = true
+
+	calls, exists := callGraph[currentFunc]
+	if !exists || len(calls) == 0 {
+		return
+	}
+
+	// Group calls by function name to handle multiple calls to same function
+	callGroups := make(map[string][]FunctionCall)
+	for _, call := range calls {
+		callee := call.CalledFunction
+		if call.Package != "" {
+			callee = call.Package + "." + callee
+		}
+		callGroups[callee] = append(callGroups[callee], call)
+	}
+
+	for callee, callList := range callGroups {
+		// Show the call with line number
+		line := callLineMap[currentFunc][callee]
+		if len(callList) > 1 {
+			// Multiple calls to same function, show count
+			lines := make([]string, len(callList))
+			for i, call := range callList {
+				lines[i] = fmt.Sprintf("%d", call.Line)
+			}
+			output.WriteString(fmt.Sprintf("%s  -> %s (lines %s)", indent, callee, strings.Join(lines, ", ")))
+		} else {
+			output.WriteString(fmt.Sprintf("%s  -> %s (line %d)", indent, callee, line))
+		}
+
+		// Check if this callee has further calls (only for local functions)
+		if callList[0].Package == "" && callGraph[callList[0].CalledFunction] != nil {
+			// Continue the chain inline for local functions
+			subVisited := make(map[string]bool)
+			for k, v := range visited {
+				subVisited[k] = v
+			}
+
+			subCalls := callGraph[callList[0].CalledFunction]
+			if len(subCalls) > 0 {
+				// Check if it's a simple single call that we can chain inline
+				if len(subCalls) == 1 && subCalls[0].Package == "" && !subVisited[subCalls[0].CalledFunction] {
+					// Chain inline
+					nextCallee := subCalls[0].CalledFunction
+					if subCalls[0].Package != "" {
+						nextCallee = subCalls[0].Package + "." + nextCallee
+					}
+					nextLine := callLineMap[callList[0].CalledFunction][nextCallee]
+					output.WriteString(fmt.Sprintf(" -> %s (line %d)", nextCallee, nextLine))
+
+					// Continue chaining if possible
+					subVisited[callList[0].CalledFunction] = true
+					chainSingleCalls(subCalls[0].CalledFunction, callGraph, callLineMap, subVisited, output, 5) // Max chain length 5
+				}
+			}
+		}
+
+		output.WriteString("\n")
+
+		// For complex cases with multiple calls, show them indented
+		if callList[0].Package == "" && len(callGraph[callList[0].CalledFunction]) > 1 {
+			subVisited := make(map[string]bool)
+			for k, v := range visited {
+				subVisited[k] = v
+			}
+			generateCallChains(callList[0].CalledFunction, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, depth+1)
+		}
+	}
+}
+
+// generateCallChainsFromMain recursively generates call chains starting from main, only showing reachable functions
+func generateCallChainsFromMain(currentFunc string, callGraph map[string][]FunctionCall,
+	callLineMap map[string]map[string]int, indent string, visited map[string]bool,
+	output *strings.Builder, processedFunctions map[string]bool, reachableFromMain map[string]bool, depth int) {
+
+	if depth > 10 || visited[currentFunc] {
+		return
+	}
+
+	visited[currentFunc] = true
+	processedFunctions[currentFunc] = true
+
+	calls, exists := callGraph[currentFunc]
+	if !exists || len(calls) == 0 {
+		return
+	}
+
+	// Build method resolution mapping
+	methodSignatures := make(map[string][]string)
+	for funcSig := range callGraph {
+		if strings.Contains(funcSig, ") ") {
+			parts := strings.Split(funcSig, ") ")
+			if len(parts) >= 2 {
+				methodName := strings.Split(parts[1], "(")[0]
+				methodSignatures[methodName] = append(methodSignatures[methodName], funcSig)
+			}
+		}
+	}
+
+	// Group calls by function name to handle multiple calls to same function
+	callGroups := make(map[string][]FunctionCall)
+	for _, call := range calls {
+		callee := call.CalledFunction
+		if call.Package != "" {
+			callee = call.Package + "." + callee
+		}
+
+		// Only include if reachable from main
+		if reachableFromMain[callee] || reachableFromMain[call.CalledFunction] {
+			callGroups[callee] = append(callGroups[callee], call)
+		} else if call.Package == "" {
+			// For local calls that aren't directly reachable, check method signatures
+			if methodSigs, exists := methodSignatures[call.CalledFunction]; exists {
+				for _, methodSig := range methodSigs {
+					if reachableFromMain[methodSig] {
+						// Use the method signature as the callee instead
+						callGroups[methodSig] = append(callGroups[methodSig], call)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	for callee, callList := range callGroups {
+		// Show the call with line number
+		line := callLineMap[currentFunc][callee]
+
+		// If line is 0, use the first call's line number (for method resolution cases)
+		if line == 0 && len(callList) > 0 {
+			line = callList[0].Line
+		}
+
+		if len(callList) > 1 {
+			// Multiple calls to same function, show count
+			lines := make([]string, len(callList))
+			for i, call := range callList {
+				lines[i] = fmt.Sprintf("%d", call.Line)
+			}
+			output.WriteString(fmt.Sprintf("%s  -> %s (lines %s)", indent, callee, strings.Join(lines, ", ")))
+		} else {
+			output.WriteString(fmt.Sprintf("%s  -> %s (line %d)", indent, callee, line))
+		}
+
+		output.WriteString("\n")
+
+		// For method signatures, recurse on the method signature itself
+		if strings.Contains(callee, ") ") && reachableFromMain[callee] {
+			subVisited := make(map[string]bool)
+			for k, v := range visited {
+				subVisited[k] = v
+			}
+			generateCallChainsFromMain(callee, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+		} else if callList[0].Package == "" {
+			// For local calls, check if they map to method signatures and recurse on those
+			if methodSigs, exists := methodSignatures[callList[0].CalledFunction]; exists {
+				for _, methodSig := range methodSigs {
+					if reachableFromMain[methodSig] {
+						subVisited := make(map[string]bool)
+						for k, v := range visited {
+							subVisited[k] = v
+						}
+						generateCallChainsFromMain(methodSig, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+						break
+					}
+				}
+			} else if reachableFromMain[callList[0].CalledFunction] {
+				// For regular local functions that are reachable from main
+				subVisited := make(map[string]bool)
+				for k, v := range visited {
+					subVisited[k] = v
+				}
+				generateCallChainsFromMain(callList[0].CalledFunction, callGraph, callLineMap, indent+"    ", subVisited, output, processedFunctions, reachableFromMain, depth+1)
+			}
+		}
+	}
+}
+
+// chainSingleCallsFromMain continues chaining single function calls inline, only for functions reachable from main
+func chainSingleCallsFromMain(currentFunc string, callGraph map[string][]FunctionCall,
+	callLineMap map[string]map[string]int, visited map[string]bool,
+	output *strings.Builder, reachableFromMain map[string]bool, maxDepth int) {
+
+	if maxDepth <= 0 || visited[currentFunc] {
+		return
+	}
+
+	visited[currentFunc] = true
+	calls := callGraph[currentFunc]
+
+	if len(calls) == 1 && calls[0].Package == "" && !visited[calls[0].CalledFunction] {
+		callee := calls[0].CalledFunction
+		// Only chain if reachable from main
+		if reachableFromMain[callee] {
+			line := callLineMap[currentFunc][callee]
+			output.WriteString(fmt.Sprintf(" -> %s (line %d)", callee, line))
+			chainSingleCallsFromMain(callee, callGraph, callLineMap, visited, output, reachableFromMain, maxDepth-1)
+		}
+	}
+}
+
+// chainSingleCalls continues chaining single function calls inline
+func chainSingleCalls(currentFunc string, callGraph map[string][]FunctionCall,
+	callLineMap map[string]map[string]int, visited map[string]bool,
+	output *strings.Builder, maxDepth int) {
+
+	if maxDepth <= 0 || visited[currentFunc] {
+		return
+	}
+
+	visited[currentFunc] = true
+	calls := callGraph[currentFunc]
+
+	if len(calls) == 1 && calls[0].Package == "" && !visited[calls[0].CalledFunction] {
+		callee := calls[0].CalledFunction
+		line := callLineMap[currentFunc][callee]
+		output.WriteString(fmt.Sprintf(" -> %s (line %d)", callee, line))
+		chainSingleCalls(callee, callGraph, callLineMap, visited, output, maxDepth-1)
+	}
+}
