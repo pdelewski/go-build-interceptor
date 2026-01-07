@@ -55,10 +55,13 @@ func AfterMyFunction(ctx hooks.HookContext) {
 
 ### 2. Compile with hooks
 
+Navigate to your Go project directory, then compile with hooks passed as an argument:
+
 ```bash
-./hc --compile path/to/myhooks.go
+cd /path/to/your/project
+/path/to/hc --compile path/to/myhooks.go
 # or short form
-./hc -c path/to/myhooks.go
+/path/to/hc -c path/to/myhooks.go
 ```
 
 This builds your project with the hooks automatically injected.
