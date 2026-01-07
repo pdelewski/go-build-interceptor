@@ -148,9 +148,9 @@ Trade-offs:
 
 #### 2) How injection is performed
 
-- OpenTelemetry uses -toolexec, wrapping compiler tool invocations during the build.
+- OpenTelemetry uses `-toolexec`, wrapping compiler tool invocations during the build.
 
-- go-build-interceptor uses build-log dump + modify + replay via -x -json -a.
+- go-build-interceptor uses build-log dump + modify + replay via `-x -json -a`.
 
 The log+replay direction was explored because it is easier to reason about and, importantly, easier to debug the tool itself. A -toolexec plugin is powerful, but debugging the plugin can be difficult because it runs inside the build pipeline. The modified build plan becomes explicit and replayable, which greatly helps when developing and validating such tooling.
 
