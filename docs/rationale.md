@@ -128,6 +128,32 @@ Many projects, including the [OpenTelemetry Go compile-time instrumentation effo
 
 For that reason, go-build-interceptor relies on plain Go code as its DSL. The guiding principle is simple: if you can express a transformation in Go, you can use it as a rule. YAML can still be layered on top as a convenience format for trivial cases, but internally the Go DSL acts as a powerful and flexible representation.
 
+### OpenTelemetry vs go-build-interceptor — key differences
+
+An alternative approach is used by the OpenTelemetry Go compile-time instrumentation project:
+
+https://github.com/open-telemetry/opentelemetry-go-compile-instrumentation
+
+#### 1) How rules are defined
+
+OpenTelemetry — YAML-based declarative definitions
+
+go-build-interceptor — Go-based DSL (with the option to layer YAML on top for simple cases)
+
+Trade-offs:
+
+YAML is approachable and easy to audit, but it becomes limiting with complex rewrites.
+
+Go DSL offers full language power and enables context-sensitive transformations, though it expects users to be comfortable with a more programmatic style.
+
+#### 2) How injection is performed
+
+OpenTelemetry uses -toolexec, wrapping compiler tool invocations during the build.
+
+go-build-interceptor uses build-log dump + modify + replay via -x -json -a.
+
+The log+replay direction was explored because it is easier to reason about and, importantly, easier to debug the tool itself. A -toolexec plugin is powerful, but debugging the plugin can be difficult because it runs inside the build pipeline. The modified build plan becomes explicit and replayable, which greatly helps when developing and validating such tooling.
+
 ## UI
 
 The second component of go-build-interceptor is the UI, whose main goal is to reduce the friction related to AOP techniques. It offers a View menu—a window through which you can examine your project from different perspectives.
