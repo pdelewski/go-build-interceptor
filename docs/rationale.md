@@ -136,21 +136,21 @@ https://github.com/open-telemetry/opentelemetry-go-compile-instrumentation
 
 #### 1) How rules are defined
 
-OpenTelemetry — YAML-based declarative definitions
+- OpenTelemetry — YAML-based declarative definitions
 
-go-build-interceptor — Go-based DSL (with the option to layer YAML on top for simple cases)
+- go-build-interceptor — Go-based DSL (with the option to layer YAML on top for simple cases)
 
 Trade-offs:
 
-YAML is approachable and easy to audit, but it becomes limiting with complex rewrites.
+- YAML is approachable and easy to audit, but it becomes limiting with complex rewrites.
 
-Go DSL offers full language power and enables context-sensitive transformations, though it expects users to be comfortable with a more programmatic style.
+- Go DSL offers full language power and enables context-sensitive transformations, though it expects users to be comfortable with a more programmatic style.
 
 #### 2) How injection is performed
 
-OpenTelemetry uses -toolexec, wrapping compiler tool invocations during the build.
+- OpenTelemetry uses -toolexec, wrapping compiler tool invocations during the build.
 
-go-build-interceptor uses build-log dump + modify + replay via -x -json -a.
+- go-build-interceptor uses build-log dump + modify + replay via -x -json -a.
 
 The log+replay direction was explored because it is easier to reason about and, importantly, easier to debug the tool itself. A -toolexec plugin is powerful, but debugging the plugin can be difficult because it runs inside the build pipeline. The modified build plan becomes explicit and replayable, which greatly helps when developing and validating such tooling.
 
