@@ -10,6 +10,8 @@ cd go-build-interceptor/hc
 go build
 ```
 
+The `hc` directory contains the **hook compiler** - the core tool that performs build-time instrumentation.
+
 ## Quick Start
 
 ### 1. Create a hooks file
