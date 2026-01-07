@@ -1730,8 +1730,8 @@ function toggleGitPanel() {
 }
 
 async function showFunctions() {
-    // Call external go-build-interceptor --pack-functions and show output in explorer
-    console.log('Functions view - calling go-build-interceptor --pack-functions');
+    // Call external hc --pack-functions and show output in explorer
+    console.log('Functions view - calling hc --pack-functions');
 
     // Hide any previous selection toolbar
     hideSelectionToolbar();
@@ -1743,7 +1743,7 @@ async function showFunctions() {
         // Show loading message
         const fileTree = document.getElementById('fileTree');
         if (fileTree) {
-            fileTree.innerHTML = '<div class="loading-message">⚙️ Running go-build-interceptor --pack-functions...</div>';
+            fileTree.innerHTML = '<div class="loading-message">⚙️ Running hc --pack-functions...</div>';
         }
         
         // Call the API endpoint
@@ -3952,7 +3952,7 @@ async function runCompile() {
     // Show terminal and clear previous output
     showTerminal();
     clearTerminal();
-    addTerminalOutput('$ go-build-interceptor --compile ' + hooksFile.trim(), 'terminal-command');
+    addTerminalOutput('$ hc --compile ' + hooksFile.trim(), 'terminal-command');
     addTerminalOutput('Compiling...', 'terminal-info');
 
     try {

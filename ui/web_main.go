@@ -82,18 +82,18 @@ func ensureBuildLog() error {
 
 	log.Printf("Build log not found, capturing build output for: %s\n", rootDirectory)
 
-	// Get absolute path to go-build-interceptor executable
-	execPath, err := filepath.Abs("../go-build-interceptor")
+	// Get absolute path to hc executable
+	execPath, err := filepath.Abs("../hc/hc")
 	if err != nil {
 		return fmt.Errorf("failed to resolve executable path: %v", err)
 	}
 
 	// Check if executable exists
 	if _, err := os.Stat(execPath); os.IsNotExist(err) {
-		return fmt.Errorf("go-build-interceptor executable not found at: %s", execPath)
+		return fmt.Errorf("hc executable not found at: %s", execPath)
 	}
 
-	// Run go-build-interceptor --json to capture the build log
+	// Run hc --json to capture the build log
 	log.Printf("Executing: %s --json\n", execPath)
 	cmd := exec.Command(execPath, "--json")
 	cmd.Dir = rootDirectory
@@ -1060,8 +1060,8 @@ func getPackFiles(w http.ResponseWriter, r *http.Request) {
 	// Log the operation
 	fmt.Printf("🔍 Executing pack-files command...\n")
 
-	// Get absolute path to go-build-interceptor executable
-	execPath, err := filepath.Abs("../go-build-interceptor")
+	// Get absolute path to hc executable
+	execPath, err := filepath.Abs("../hc/hc")
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
 		return
@@ -1081,7 +1081,7 @@ func getPackFiles(w http.ResponseWriter, r *http.Request) {
 	// Capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+		errorMsg := fmt.Sprintf("Failed to execute hc: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
 			err, execPath, rootDirectory, string(output))
 		sendErrorResponse(w, errorMsg)
 		return
@@ -1106,8 +1106,8 @@ func getPackFunctions(w http.ResponseWriter, r *http.Request) {
 	// Log the operation
 	fmt.Printf("⚙️ Executing pack-functions command...\n")
 
-	// Get absolute path to go-build-interceptor executable
-	execPath, err := filepath.Abs("../go-build-interceptor")
+	// Get absolute path to hc executable
+	execPath, err := filepath.Abs("../hc/hc")
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
 		return
@@ -1127,7 +1127,7 @@ func getPackFunctions(w http.ResponseWriter, r *http.Request) {
 	// Capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+		errorMsg := fmt.Sprintf("Failed to execute hc: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
 			err, execPath, rootDirectory, string(output))
 		sendErrorResponse(w, errorMsg)
 		return
@@ -1152,8 +1152,8 @@ func getPackPackages(w http.ResponseWriter, r *http.Request) {
 	// Log the operation
 	fmt.Printf("📦 Executing pack-packages command...\n")
 
-	// Get absolute path to go-build-interceptor executable
-	execPath, err := filepath.Abs("../go-build-interceptor")
+	// Get absolute path to hc executable
+	execPath, err := filepath.Abs("../hc/hc")
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
 		return
@@ -1173,7 +1173,7 @@ func getPackPackages(w http.ResponseWriter, r *http.Request) {
 	// Capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+		errorMsg := fmt.Sprintf("Failed to execute hc: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
 			err, execPath, rootDirectory, string(output))
 		sendErrorResponse(w, errorMsg)
 		return
@@ -1198,8 +1198,8 @@ func getCallGraph(w http.ResponseWriter, r *http.Request) {
 	// Log the operation
 	fmt.Printf("🕸️ Executing callgraph command...\n")
 
-	// Get absolute path to go-build-interceptor executable
-	execPath, err := filepath.Abs("../go-build-interceptor")
+	// Get absolute path to hc executable
+	execPath, err := filepath.Abs("../hc/hc")
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
 		return
@@ -1219,7 +1219,7 @@ func getCallGraph(w http.ResponseWriter, r *http.Request) {
 	// Capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+		errorMsg := fmt.Sprintf("Failed to execute hc: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
 			err, execPath, rootDirectory, string(output))
 		sendErrorResponse(w, errorMsg)
 		return
@@ -1244,8 +1244,8 @@ func getWorkDir(w http.ResponseWriter, r *http.Request) {
 	// Log the operation
 	fmt.Printf("📁 Executing workdir command...\n")
 
-	// Get absolute path to go-build-interceptor executable
-	execPath, err := filepath.Abs("../go-build-interceptor")
+	// Get absolute path to hc executable
+	execPath, err := filepath.Abs("../hc/hc")
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
 		return
@@ -1265,7 +1265,7 @@ func getWorkDir(w http.ResponseWriter, r *http.Request) {
 	// Capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+		errorMsg := fmt.Sprintf("Failed to execute hc: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
 			err, execPath, rootDirectory, string(output))
 		sendErrorResponse(w, errorMsg)
 		return
@@ -1303,8 +1303,8 @@ func getCompile(w http.ResponseWriter, r *http.Request) {
 	// Log the operation
 	fmt.Printf("🔧 Executing compile command with hooks file: %s...\n", req.HooksFile)
 
-	// Get absolute path to go-build-interceptor executable
-	execPath, err := filepath.Abs("../go-build-interceptor")
+	// Get absolute path to hc executable
+	execPath, err := filepath.Abs("../hc/hc")
 	if err != nil {
 		sendErrorResponse(w, fmt.Sprintf("Failed to resolve executable path: %v", err))
 		return
@@ -1324,7 +1324,7 @@ func getCompile(w http.ResponseWriter, r *http.Request) {
 	// Capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		errorMsg := fmt.Sprintf("Failed to execute go-build-interceptor: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
+		errorMsg := fmt.Sprintf("Failed to execute hc: %v\nExecutable: %s\nWorking Dir: %s\nOutput: %s",
 			err, execPath, rootDirectory, string(output))
 		sendErrorResponse(w, errorMsg)
 		return
@@ -1519,7 +1519,7 @@ func handleDebug(w http.ResponseWriter, r *http.Request) {
 
 	// Generate source mappings from existing build log
 	fmt.Printf("📄 Generating source mappings...\n")
-	interceptorPath, err := filepath.Abs("../go-build-interceptor")
+	interceptorPath, err := filepath.Abs("../hc/hc")
 	if err == nil {
 		if _, err := os.Stat(interceptorPath); err == nil {
 			cmd := exec.Command(interceptorPath, "--source-mappings")

@@ -1,10 +1,10 @@
 # Architecture
 
-This document describes the internal architecture of go-build-interceptor.
+This document describes the internal architecture of hc (hook compiler).
 
 ## Overview
 
-go-build-interceptor works by capturing the internal commands that `go build` executes during compilation. It parses these commands, analyzes the source code being compiled, and can inject instrumentation code (hooks) into target functions before the final compilation occurs.
+hc works by capturing the internal commands that `go build` executes during compilation. It parses these commands, analyzes the source code being compiled, and can inject instrumentation code (hooks) into target functions before the final compilation occurs.
 
 ## Core Components
 
@@ -92,13 +92,14 @@ When a function matches a hook definition, the tool:
 
 ```
 go-build-interceptor/
-├── main.go              # Entry point and main processing logic
-├── parser.go            # Build log parser
-├── analyzer.go          # AST-based code analyzer
-├── capture.go           # Build output capture
-├── config.go            # Configuration and flag parsing
-├── types.go             # Shared type definitions
-├── hooks_processor.go   # Hook matching and instrumentation
+├── hc/                  # Hook compiler (main tool)
+│   ├── main.go          # Entry point and main processing logic
+│   ├── parser.go        # Build log parser
+│   ├── analyzer.go      # AST-based code analyzer
+│   ├── capture.go       # Build output capture
+│   ├── config.go        # Configuration and flag parsing
+│   ├── types.go         # Shared type definitions
+│   └── hooks_processor.go # Hook matching and instrumentation
 ├── hooks/
 │   └── hooks.go         # Hook framework definitions
 ├── ui/
@@ -168,25 +169,25 @@ The `build-metadata/` directory is automatically created when running capture or
 
 ```bash
 # Capture build output (JSON format - recommended)
-./go-build-interceptor --json
+./hc --json
 
 # Capture build output (text format)
-./go-build-interceptor --capture
+./hc --capture
 
 # Generate and execute replay script (uses default path: build-metadata/go-build.log)
-./go-build-interceptor --execute
+./hc --execute
 
 # Interactive execution (step through commands)
-./go-build-interceptor --interactive
+./hc --interactive
 
 # Extract function definitions from compiled files
-./go-build-interceptor --pack-functions
+./hc --pack-functions
 
 # Generate call graph from compiled files
-./go-build-interceptor --callgraph
+./hc --callgraph
 
 # Compile with hook instrumentation
-./go-build-interceptor --compile path/to/hooks.go
+./hc --compile path/to/hooks.go
 ```
 
 ## Hook Context
